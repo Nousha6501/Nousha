@@ -26,6 +26,7 @@ RENAME_SAMPLES = {
     '55H_AaspartateP4_M_KI_52': '55H_AP4_M_KI_52',  # typo in an older pos export
     '86H_AP4_M_KI_9':           '86H_AP4_M_KI_98',  # metab file; mouse 86 is ..._98 (see 86C) - check!
 }
+DROP_METABOLITES = r'^13C '   # spiked 13C internal standards (not biology); None = keep
 DROP_SAMPLES = []   # e.g. ['55H_AP4_M_KI_52'] - pos file labels it 'Standard', decide yourself
 
 MAX_MISSING = 0.80   # drop a metabolite if missing in > 80 % of biological samples
@@ -57,6 +58,8 @@ def load_matrix(path, mode):
 
     df = df.dropna(subset=[METAB_NAME_COL]).set_index(METAB_NAME_COL)
     df.index = df.index.str.strip()
+    if DROP_METABOLITES:
+        df = df[~df.index.str.contains(DROP_METABOLITES)]
     df = df.apply(pd.to_numeric, errors='coerce')
     df = df.replace(0, np.nan)                                    # 0 area = not detected
     df = df.drop(columns=df.columns[df.columns.str.contains(EXCLUDE_PATTERN)])
