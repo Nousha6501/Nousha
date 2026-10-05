@@ -1,7 +1,7 @@
 # ══════════════════════════════════════════════════════════════════
-# Hippocampus - KNN distance vs. injection order  [SENSITIVITY RE-RUN]
-# Leaves out 72H_AP4_M_KI_64, 23H_AP4_F_KI_162 (outlier-flagged) and 9H-12H
-# (homogenization issue) from THIS screen only; no data file is changed.
+# Hippocampus - KNN distance vs. injection order  [IS-normalized file]
+# ALL samples kept: 72H_AP4_M_KI_64, 23H_AP4_F_KI_162 and 9H-12H are NOT removed;
+# 9H-12H are marked with a black ring.
 # Data: IS-normalized, imputed file (not raw) -> not directly comparable with the raw screen
 # colored by consensus flag count (n_methods_flagged)
 # Fully self-contained.
@@ -27,8 +27,8 @@ file_path = r"C:\Users\nnekooiemarnany\OneDrive - UTHealth Houston\Desktop\Metab
 REGION_KEY  = 'hip'                                  # text label match ('Hippocmpus', ...)
 REGION_CODE = 0                                      # numeric code of hippocampus in old files
 homog_prefixes = ('9H_', '10H_', '11H_', '12H_')     # documented issues: FLAGGED, not removed
-EXCLUDE_SAMPLES = ['72H_AP4_M_KI_64', '23H_AP4_F_KI_162']
-EXCLUDE_HOMOG   = True                               # also leave out 9H-12H
+EXCLUDE_SAMPLES = []                                 # keep all samples
+EXCLUDE_HOMOG   = False                              # keep 9H-12H (marked only)
 QC_OUTLIER_ZONE = (0, 10)                            # injections of the poor first QC vials (6-7)
 CONTAMINATION = 0.05
 
