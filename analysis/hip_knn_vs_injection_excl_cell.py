@@ -1,14 +1,13 @@
 # ══════════════════════════════════════════════════════════════════
-# Hippocampus - KNN distance vs. injection order  [IS-normalized file]
-# Leaves out ONLY 23H_AP4_F_KI_162 (from this screen; no data file is changed).
-# All other samples are kept, incl. 72H_AP4_M_KI_64 and 9H-12H (marked with a black ring).
-# Data: IS-normalized, imputed file (not raw) -> not directly comparable with the raw screen
-# colored by consensus flag count (n_methods_flagged)
-# Fully self-contained.
-# Default = FLAG ONLY: no sample is removed; 9H-12H (homogenization issue) are marked
-# with a black ring. For a sensitivity re-run (do other samples become outliers once the
-# strongest ones are left out?) fill EXCLUDE_SAMPLES and/or set EXCLUDE_HOMOG = True.
-# This only leaves them out of THIS screen; no data file is changed.
+# Hippocampus - KNN distance vs. injection order
+# Leaves out of THIS screen (no data file is changed):
+#   23H_AP4_F_KI_162 (outlier-flagged)
+#   9H/9C, 10H/10C, 11H/11C, 12H/12C (documented homogenization issue)
+#   (the C = cortex ones are not in a Hippocampus screen anyway; listed so the same
+#    settings can be copied into a cortex screen)
+# All other samples are kept, incl. 72H_AP4_M_KI_64.
+# Colored by consensus flag count (n_methods_flagged). Fully self-contained.
+# To keep everyone instead: EXCLUDE_SAMPLES = [] and EXCLUDE_HOMOG = False.
 # Works with the new file (text labels, 'Region of brain', 'line of APOE', POS_/NEG_)
 # and the old one (numeric codes, 'Brain_Region', 'APOE_Genotype', Pos_/Neg_).
 # ══════════════════════════════════════════════════════════════════
@@ -23,12 +22,13 @@ from pyod.models.abod import ABOD
 from pyod.models.ocsvm import OCSVM
 
 # ── 0a. LOAD DATA ──
-file_path = r"C:\Users\nnekooiemarnany\OneDrive - UTHealth Houston\Desktop\Metabolom_analys\CSV2_Revised\RevisedScript\lasVersion_Pipline\Norm_Data_IS\ISnorm_clean_imputed_Data.csv"
+file_path = r"O:\metabolom\Result\Core_results_original_data\25-M-113\raw data\new version_09.2026\last_raw data\master_with_QC3.csv"
 REGION_KEY  = 'hip'                                  # text label match ('Hippocmpus', ...)
 REGION_CODE = 0                                      # numeric code of hippocampus in old files
-homog_prefixes = ('9H_', '10H_', '11H_', '12H_')     # documented issues: FLAGGED, not removed
-EXCLUDE_SAMPLES = ['23H_AP4_F_KI_162']               # only this sample is left out
-EXCLUDE_HOMOG   = False                              # keep 9H-12H (marked only)
+homog_prefixes = ('9H_', '10H_', '11H_', '12H_',     # documented homogenization issue
+                  '9C_', '10C_', '11C_', '12C_')
+EXCLUDE_SAMPLES = ['23H_AP4_F_KI_162']
+EXCLUDE_HOMOG   = True                               # leave out 9H/C-12H/C
 QC_OUTLIER_ZONE = (0, 10)                            # injections of the poor first QC vials (6-7)
 CONTAMINATION = 0.05
 
@@ -144,7 +144,7 @@ sns.scatterplot(data=df_target, x='Injection_number', y='mean_knn_distance',
                 hue='n_methods_flagged', palette=palette, s=60)
 h = df_target[df_target['homog_issue']]
 plt.scatter(h['Injection_number'], h['mean_knn_distance'], s=180, facecolors='none',
-            edgecolors='black', linewidths=1.5, label='homog. issue (9H-12H)')
+            edgecolors='black', linewidths=1.5, label='homog. issue (9-12 H/C)')
 plt.axhline(knn_threshold, color='red', linestyle=':', label=f'KNN threshold ({knn_threshold:.2f})')
 plt.axvline(batch_cut, color='gray', linestyle='--', label=f'Batch A/B cutoff (inj {batch_cut:g})')
 plt.axvspan(*QC_OUTLIER_ZONE, color='red', alpha=0.1, label='known QC outlier zone (inj 6-7)')
