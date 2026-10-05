@@ -2,7 +2,7 @@
 # FINAL NORMALIZATION
 #   - no IS normalization, no protein normalization
 #   - PQN per ionization mode (POS, NEG), with a separate reference per brain region
-#       reference = median profile of ALL samples (KI + WT) of that region
+#       reference = median profile of the WT samples of that region (same reference for KI and WT)
 #       PQN factors are computed from reproducible metabolites only (raw QC RSD <= 30%)
 #   - QC: normalized against the median profile of all samples
 #   - QC RSD: flag metabolites (all are kept), log2, save
@@ -25,7 +25,8 @@ output_dir = r"O:\metabolom\Result\new version result_09.2026"
 
 REGION_COL = 'Region of brain'
 CTX_LABEL  = 'Cortex'        # exact label of cortex in REGION_COL
-GENO_COL   = 'Genotype'      # column with KI/KI vs WT/WT (only used for a check)
+GENO_COL   = 'Genotype'      # column with KI/KI vs WT/WT
+WT_LABEL   = 'WT/WT'         # exact label of WT in GENO_COL (PQN reference group)
 QC_RSD_MAX = 30              # %: metabolites above this are flagged and not used for PQN factors
 CTX_FACTOR = {'main': 1.31, 'low': 1.10, 'high': 1.56}
 
@@ -39,6 +40,9 @@ s_mask  = df['Type'] == 'Sample'
 assert df.index.is_unique
 assert df.loc[s_mask, REGION_COL].notna().all(), "some samples have no region"
 assert CTX_LABEL in set(df.loc[s_mask, REGION_COL]), f"'{CTX_LABEL}' not found in {REGION_COL}"
+assert GENO_COL in df.columns, f"'{GENO_COL}' column not found"
+assert WT_LABEL in set(df.loc[s_mask, GENO_COL]), f"'{WT_LABEL}' not found in {GENO_COL}"
+wt_mask = s_mask & (df[GENO_COL] == WT_LABEL)
 print(f"{s_mask.sum()} samples, {qc_mask.sum()} QCs, {len(metabolite_cols)} metabolites")
 print("Samples per region:", df.loc[s_mask, REGION_COL].value_counts().to_dict())
 
@@ -65,9 +69,10 @@ for mode in ['POS', 'NEG']:
     fcol = f'PQN_factor_{mode}'
     print(f"\n{mode}: {len(cols)} metabolites, {len(factor_cols)} used for PQN factors (raw QC RSD <= {QC_RSD_MAX}%)")
 
-    # samples: one reference per region (KI + WT together)
+    # samples: one reference per region = median of the WT samples of that region,
+    # applied to KI and WT alike
     for region, idx in df[s_mask].groupby(REGION_COL).groups.items():
-        ref = df.loc[idx, cols].median()
+        ref = df.loc[wt_mask & (df[REGION_COL] == region), cols].median()
         normed, factor = pqn(df.loc[idx], cols, ref, factor_cols)
         df_norm.loc[idx, cols] = normed
         df_norm.loc[idx, fcol] = factor
@@ -81,23 +86,23 @@ for mode in ['POS', 'NEG']:
     f = df_norm.loc[s_mask, fcol]
     print(f"{mode}: PQN factor in samples {f.min():.2f}-{f.max():.2f}; "
           f"median by region (~1 by design): {f.groupby(df.loc[s_mask, REGION_COL]).median().round(2).to_dict()}")
+    print(f"{mode}: median factor of WT by region (~1 by design): "
+          f"{df_norm.loc[wt_mask, fcol].groupby(df.loc[wt_mask, REGION_COL]).median().round(2).to_dict()}")
     print(f"{mode}: QC median RSD raw {raw_qc_rsd[cols].median():.1f}% -> "
           f"after PQN {df_norm.loc[qc_mask, cols].apply(rsd).median():.1f}%")
 
 # ---------- checks ----------
 # 1) PQN factors should not differ between genotypes within a region
 #    (if they do, PQN may have removed part of a global KI effect)
-if GENO_COL in df.columns:
-    from scipy.stats import mannwhitneyu
-    print()
-    for mode in ['POS', 'NEG']:
-        for region, d in df_norm[s_mask].groupby(REGION_COL):
-            groups = {g: v[f'PQN_factor_{mode}'].dropna().values for g, v in d.groupby(GENO_COL)}
-            p = mannwhitneyu(*groups.values()).pvalue if len(groups) == 2 else np.nan
-            med = {g: round(float(np.median(v)), 2) for g, v in groups.items()}
-            print(f"{mode} {region}: median PQN factor by genotype {med}  p = {p:.3f}  (want p > 0.05)")
-else:
-    print(f"\n'{GENO_COL}' column not found: genotype check skipped")
+#    WT median factor is ~1 by design, so a KI median far from 1 = global KI shift
+from scipy.stats import mannwhitneyu
+print()
+for mode in ['POS', 'NEG']:
+    for region, d in df_norm[s_mask].groupby(REGION_COL):
+        groups = {g: v[f'PQN_factor_{mode}'].dropna().values for g, v in d.groupby(GENO_COL)}
+        p = mannwhitneyu(*groups.values()).pvalue if len(groups) == 2 else np.nan
+        med = {g: round(float(np.median(v)), 2) for g, v in groups.items()}
+        print(f"{mode} {region}: median PQN factor by genotype {med}  p = {p:.3f}  (want p > 0.05)")
 
 # 2) POS and NEG come from the same extract -> their factors should correlate
 r = df_norm.loc[s_mask, ['PQN_factor_POS', 'PQN_factor_NEG']].corr().iloc[0, 1]
