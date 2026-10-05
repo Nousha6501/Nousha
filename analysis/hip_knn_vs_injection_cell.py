@@ -1,8 +1,11 @@
 # ══════════════════════════════════════════════════════════════════
 # Hippocampus (RAW, log1p) - KNN distance vs. injection order,
 # colored by consensus flag count (n_methods_flagged)
-# Fully self-contained. FLAG ONLY: no sample is removed;
-# 9H-12H (homogenization issue) are kept and marked with a black ring.
+# Fully self-contained.
+# Default = FLAG ONLY: no sample is removed; 9H-12H (homogenization issue) are marked
+# with a black ring. For a sensitivity re-run (do other samples become outliers once the
+# strongest ones are left out?) fill EXCLUDE_SAMPLES and/or set EXCLUDE_HOMOG = True.
+# This only leaves them out of THIS screen; no data file is changed.
 # Works with the new file (text labels, 'Region of brain', 'line of APOE', POS_/NEG_)
 # and the old one (numeric codes, 'Brain_Region', 'APOE_Genotype', Pos_/Neg_).
 # ══════════════════════════════════════════════════════════════════
@@ -21,6 +24,8 @@ file_path = r"O:\metabolom\Result\Core_results_original_data\25-M-113\raw data\n
 REGION_KEY  = 'hip'                                  # text label match ('Hippocmpus', ...)
 REGION_CODE = 0                                      # numeric code of hippocampus in old files
 homog_prefixes = ('9H_', '10H_', '11H_', '12H_')     # documented issues: FLAGGED, not removed
+EXCLUDE_SAMPLES = []                                 # e.g. ['72H_AP4_M_KI_64', '23H_AP4_F_KI_162']
+EXCLUDE_HOMOG   = False                              # True = also leave out 9H-12H
 QC_OUTLIER_ZONE = (0, 10)                            # injections of the poor first QC vials (6-7)
 CONTAMINATION = 0.05
 
@@ -59,6 +64,18 @@ else:
     hip_mask = reg.astype(str).str.strip().str.lower().str.contains(REGION_KEY)
 df_target = df_raw[hip_mask].reset_index(drop=True)
 assert len(df_target), f"no Hippocampus rows. Values in '{REGION_COL}': {reg.unique().tolist()}"
+
+# ── optional exclusion (sensitivity re-run only) ──
+sid = df_target['Sample ID'].astype(str).str.strip()
+missing = [x for x in EXCLUDE_SAMPLES if x not in set(sid)]
+if missing:
+    print(f"WARNING: not found in Hippocampus samples (check spelling): {missing}")
+drop = sid.isin([x.strip() for x in EXCLUDE_SAMPLES])
+if EXCLUDE_HOMOG:
+    drop |= sid.str.startswith(homog_prefixes)
+excluded = sid[drop].tolist()
+df_target = df_target[~drop].reset_index(drop=True)
+print(f"Left out of this screen: {len(excluded)} {excluded}" if excluded else "Nothing left out")
 
 # ── 0d. readable labels (numeric codes are translated, text is kept) ──
 def label(col, codes):
@@ -102,7 +119,7 @@ df_target['ocsvm_flag']   = OCSVM(contamination=CONTAMINATION).fit(x_scaled).lab
 flag_cols = ['stratum_z_flag', 'knn_flag', 'iforest_flag', 'abod_flag', 'ocsvm_flag']
 df_target['n_methods_flagged'] = df_target[flag_cols].sum(axis=1)
 
-print(f"Hippocampus samples: {len(df_target)} (nothing removed) | metabolites: {log_metab.shape[1]} | "
+print(f"Hippocampus samples in screen: {len(df_target)} | metabolites: {log_metab.shape[1]} | "
       f"data {'already log2' if already_log else 'raw -> log1p'}")
 print("Flagged by >= 2 methods:")
 print(df_target.loc[df_target['n_methods_flagged'] >= 2,
@@ -131,6 +148,7 @@ plt.axvspan(*QC_OUTLIER_ZONE, color='red', alpha=0.1, label='known QC outlier zo
 plt.legend(title='n methods flagged', bbox_to_anchor=(1.02, 1), loc='upper left', borderaxespad=0)
 plt.xlabel('Injection number')
 plt.ylabel(f'Mean distance to {k} nearest neighbors (scaled)')
-plt.title('Hippocampus - KNN distance vs. injection order')
+plt.title('Hippocampus - KNN distance vs. injection order'
+          + (f'\n(left out: {", ".join(excluded)})' if excluded else ''))
 plt.tight_layout()
 plt.show()
