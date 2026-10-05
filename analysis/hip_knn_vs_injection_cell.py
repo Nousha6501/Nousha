@@ -121,6 +121,9 @@ df_target['n_methods_flagged'] = df_target[flag_cols].sum(axis=1)
 
 print(f"Hippocampus samples in screen: {len(df_target)} | metabolites: {log_metab.shape[1]} | "
       f"data {'already log2' if already_log else 'raw -> log1p'}")
+homog_ids = df_target.loc[df_target['homog_issue'], 'Sample ID'].tolist()
+print(f"Homogenization-issue samples in this screen: {len(homog_ids)} {homog_ids}"
+      + ("" if homog_ids else "  -> none in the data (already removed from this file, or excluded above)"))
 print("Flagged by >= 2 methods:")
 print(df_target.loc[df_target['n_methods_flagged'] >= 2,
                     ['Sample ID', 'Injection_number', 'homog_issue'] + flag_cols + ['n_methods_flagged']]
@@ -140,8 +143,9 @@ plt.figure(figsize=(11, 5))
 sns.scatterplot(data=df_target, x='Injection_number', y='mean_knn_distance',
                 hue='n_methods_flagged', palette=palette, s=60)
 h = df_target[df_target['homog_issue']]
-plt.scatter(h['Injection_number'], h['mean_knn_distance'], s=180, facecolors='none',
-            edgecolors='black', linewidths=1.5, label='homog. issue (9H-12H)')
+if len(h):                                   # ring + legend only if such samples are in the data
+    plt.scatter(h['Injection_number'], h['mean_knn_distance'], s=180, facecolors='none',
+                edgecolors='black', linewidths=1.5, label='homog. issue (9H-12H)')
 plt.axhline(knn_threshold, color='red', linestyle=':', label=f'KNN threshold ({knn_threshold:.2f})')
 plt.axvline(batch_cut, color='gray', linestyle='--', label=f'Batch A/B cutoff (inj {batch_cut:g})')
 plt.axvspan(*QC_OUTLIER_ZONE, color='red', alpha=0.1, label='known QC outlier zone (inj 6-7)')
