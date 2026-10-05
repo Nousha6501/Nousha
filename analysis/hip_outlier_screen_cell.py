@@ -1,5 +1,6 @@
 # ══════════════════════════════════════════════════════════════════
 # Hippocampus - global outlier screen scatter plots
+# Nothing is removed: samples 9H-12H (homogenization issue) are marked with a black ring
 # Fully self-contained: rebuilds df_target from scratch
 #
 # Which file?
@@ -20,14 +21,13 @@ REGION_KEY = 'hip'                       # matches 'Hippocmpus', 'Hippocampus', 
 df_raw = pd.read_csv(file_path)
 df_raw.columns = [' '.join(str(c).split()) for c in df_raw.columns]   # remove line breaks in names
 
-# ── 0b. samples only, exclude documented homogenization-issue samples ──
-excl_prefixes = ('9H_', '10H_', '11H_', '12H_')
+# ── 0b. samples only; documented homogenization-issue samples are KEPT and marked ──
+homog_prefixes = ('9H_', '10H_', '11H_', '12H_')
 if 'Type' in df_raw.columns:
     df_raw = df_raw[df_raw['Type'].astype(str).str.strip() == 'Sample']
-sid = df_raw['Sample ID'].astype(str).str.strip()
-df_raw_clean = df_raw[~sid.str.startswith(excl_prefixes)].reset_index(drop=True)
-print(f"Excluded {(sid.str.startswith(excl_prefixes)).sum()} samples: "
-      f"{sorted(sid[sid.str.startswith(excl_prefixes)])}")
+df_raw_clean = df_raw.reset_index(drop=True)
+df_raw_clean['homog_issue'] = (df_raw_clean['Sample ID'].astype(str).str.strip()
+                               .str.startswith(homog_prefixes))
 
 # ── 0c. metabolite columns: POS_/NEG_ (any case), excluding 13C internal standards ──
 all_metab = [c for c in df_raw_clean.columns
@@ -49,6 +49,8 @@ df_target['Genotype_label'] = df_target['Genotype']
 df_target['APOE_label']     = df_target['line of APOE']
 inj_col = next(c for c in df_target.columns if c.lower().startswith('injection'))
 df_target['Injection_number'] = pd.to_numeric(df_target[inj_col], errors='coerce')
+print(f"Nothing removed; marked homog_issue (black ring in plots): "
+      f"{df_target.loc[df_target['homog_issue'], 'Sample ID'].tolist()}")
 
 # ── 0e. mean log2 intensity per sample (y-axis of both plots) ──
 vals = df_target[all_metab].apply(pd.to_numeric, errors='coerce')
@@ -73,8 +75,12 @@ print(f"Outside mean ± 3 SD: {len(flag)}",
 plt.figure(figsize=(14, 6))
 sns.scatterplot(data=df_target, x=df_target.index, y='mean_log_intensity',
                 hue='Genotype_label', style='APOE_label')
+h = df_target[df_target['homog_issue']]
+plt.scatter(h.index, h['mean_log_intensity'], s=160, facecolors='none',
+            edgecolors='black', linewidths=1.5, label='homog. issue')
 plt.axhline(out_hi, color='red', linestyle='--')
 plt.axhline(out_lo, color='red', linestyle='--')
+plt.legend(bbox_to_anchor=(1.01, 1), loc='upper left', fontsize=8)
 plt.xticks(df_target.index, df_target['Sample ID'], rotation=90, fontsize=6)
 plt.xlabel('Sample ID')
 plt.ylabel('mean log2 intensity')
@@ -86,7 +92,10 @@ plt.show()
 g = sns.FacetGrid(df_target, col='Sex_label', height=5, aspect=1.3)
 g.map_dataframe(sns.scatterplot, x='Injection_number', y='mean_log_intensity',
                 hue='Genotype_label', style='APOE_label')
-for ax in g.axes.flat:
+for (sex,), ax in zip([(n,) for n in g.col_names], g.axes.flat):
+    h = df_target[df_target['homog_issue'] & (df_target['Sex_label'] == sex)]
+    ax.scatter(h['Injection_number'], h['mean_log_intensity'], s=160, facecolors='none',
+               edgecolors='black', linewidths=1.5)
     ax.axhline(out_hi, color='red', linestyle='--')
     ax.axhline(out_lo, color='red', linestyle='--')
 g.add_legend()
