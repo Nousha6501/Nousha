@@ -22,6 +22,9 @@ REGION_COL = 'Region of brain'
 EXCL_PREFIXES = ('9H_', '10H_', '11H_', '12H_', '9C_', '10C_', '11C_', '12C_')
 EXCL_SAMPLES  = ['23H_AP4_F_KI_162']
 
+# single bad values (missed / badly integrated peak) -> set to missing (NaN), sample is kept
+SET_MISSING = [('35H_AP4_F_WT_147', 'NEG_ATP/dGTP')]   # (Sample ID, metabolite); 19,964 vs median ~94e6
+
 # ---------- load, samples only ----------
 df = pd.read_csv(input_path)
 df.columns = [' '.join(str(c).split()) for c in df.columns]          # remove line breaks in names
@@ -29,6 +32,14 @@ metabolite_cols = [c for c in df.columns if c.upper().startswith(('POS_', 'NEG_'
 is_cols = [c for c in df.columns if '13C' in c]
 assert metabolite_cols, "no POS_/NEG_ metabolite columns found"
 assert PROT_COL in df.columns, f"'{PROT_COL}' column not found"
+
+for sample, met in SET_MISSING:
+    hit = df['Sample ID'].astype(str).str.strip() == sample
+    if hit.any() and met in df.columns:
+        print(f"Set to missing: {sample} / {met} (was {df.loc[hit, met].iloc[0]:,.4g})")
+        df.loc[hit, met] = np.nan
+    else:
+        print(f"WARNING: SET_MISSING entry not found: {sample} / {met}")
 
 df = df[df['Type'].astype(str).str.strip() == 'Sample'].copy()
 df[REGION_COL] = df[REGION_COL].astype(str).str.strip()

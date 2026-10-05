@@ -40,12 +40,23 @@ QC_RSD_MAX = 30              # %: robust within-batch QC RSD above this ...
 D_RATIO_MAX = 50             # %: ... AND D-ratio above this -> flagged 'low' (still kept)
 CTX_FACTOR = {'main': 1.31, 'low': 1.10, 'high': 1.56}
 
+# single bad values (missed / badly integrated peak) -> set to missing (NaN), sample is kept
+SET_MISSING = [('35H_AP4_F_WT_147', 'NEG_ATP/dGTP')]   # (Sample ID, metabolite); 19,964 vs median ~94e6
+
 # ---------- load ----------
 df = pd.read_csv(input_path)
 metabolite_cols = [c for c in df.columns if c.startswith(('POS_', 'NEG_')) and '13C' not in c]
 is_cols = [c for c in df.columns if '13C' in c]
 qc_mask = df['Type'] == 'Quality control'
 s_mask  = df['Type'] == 'Sample'
+
+for sample, met in SET_MISSING:
+    hit = df['Sample ID'].astype(str).str.strip() == sample
+    if hit.any() and met in df.columns:
+        print(f"Set to missing: {sample} / {met} (was {df.loc[hit, met].iloc[0]:,.4g})")
+        df.loc[hit, met] = np.nan
+    else:
+        print(f"WARNING: SET_MISSING entry not found: {sample} / {met}")
 
 # strip stray spaces in the label columns ('Cortex ' -> 'Cortex')
 for c in (REGION_COL, GENO_COL):
