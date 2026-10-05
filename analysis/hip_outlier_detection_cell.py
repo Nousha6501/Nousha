@@ -131,7 +131,14 @@ if (small < 3).any():
 print("\nSamples flagged by 2 or more methods:")
 show = ['Sample ID', 'Sex', 'Genotype', 'APOE', 'injection_num', 'homog_issue'] + flag_cols + ['n_methods_flagged']
 print(df_outlier_summary.loc[df_outlier_summary['n_methods_flagged'] >= 2, show].to_string(index=False))
-df_outlier_summary.to_csv(output_csv, index=False)
+import os
+if os.path.isdir(output_csv) or not output_csv.lower().endswith('.csv'):   # folder given -> add a file name
+    output_csv = os.path.join(output_csv, 'Hippocampus_outlier_summary.csv')
+try:
+    df_outlier_summary.to_csv(output_csv, index=False)
+except PermissionError:
+    raise PermissionError(f"Cannot write {output_csv}: close it if it is open in Excel, "
+                          f"or check that you can write to this folder") from None
 print(f"\nSaved full table to {output_csv}")
 
 # ── 7. visual screens ──
