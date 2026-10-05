@@ -24,9 +24,10 @@ input_path = r"O:\metabolom\Result\Core_results_original_data\25-M-113\raw data\
 output_dir = r"O:\metabolom\Result\new version result_09.2026"
 
 REGION_COL = 'Region of brain'
-CTX_LABEL  = 'Cortex'        # exact label of cortex in REGION_COL
-GENO_COL   = 'Genotype'      # column with KI/KI vs WT/WT
-WT_LABEL   = 'WT/WT'         # exact label of WT in GENO_COL (PQN reference group)
+CTX_LABEL  = 'Cortex'        # label of cortex in REGION_COL (only cortex gets the 1.31 factor;
+                             # all regions are found automatically for PQN)
+GENO_COL   = 'Genotype'      # column with KI vs WT
+WT_LABEL   = 'WT'            # label of WT in GENO_COL (PQN reference group)
 QC_RSD_MAX = 30              # %: metabolites above this are flagged and not used for PQN factors
 CTX_FACTOR = {'main': 1.31, 'low': 1.10, 'high': 1.56}
 
@@ -37,11 +38,21 @@ is_cols = [c for c in df.columns if '13C' in c]
 qc_mask = df['Type'] == 'Quality control'
 s_mask  = df['Type'] == 'Sample'
 
+# strip stray spaces in the label columns ('Cortex ' -> 'Cortex')
+for c in (REGION_COL, GENO_COL):
+    assert c in df.columns, f"'{c}' column not found. Columns: {list(df.columns[:12])} ..."
+    df[c] = df[c].astype(str).str.strip().where(df[c].notna())
+
+regions  = sorted(df.loc[s_mask, REGION_COL].dropna().unique())
+genotypes = sorted(df.loc[s_mask, GENO_COL].dropna().unique())
+print("Regions found:  ", regions)
+print("Genotypes found:", genotypes)
+
 assert df.index.is_unique
 assert df.loc[s_mask, REGION_COL].notna().all(), "some samples have no region"
-assert CTX_LABEL in set(df.loc[s_mask, REGION_COL]), f"'{CTX_LABEL}' not found in {REGION_COL}"
-assert GENO_COL in df.columns, f"'{GENO_COL}' column not found"
-assert WT_LABEL in set(df.loc[s_mask, GENO_COL]), f"'{WT_LABEL}' not found in {GENO_COL}"
+assert len(regions) == 2, f"expected 2 regions, found {regions}"
+assert CTX_LABEL in regions, f"CTX_LABEL = '{CTX_LABEL}' not in {regions}: copy the exact label"
+assert WT_LABEL in genotypes, f"WT_LABEL = '{WT_LABEL}' not in {genotypes}: copy the exact label"
 wt_mask = s_mask & (df[GENO_COL] == WT_LABEL)
 print(f"{s_mask.sum()} samples, {qc_mask.sum()} QCs, {len(metabolite_cols)} metabolites")
 print("Samples per region:", df.loc[s_mask, REGION_COL].value_counts().to_dict())
