@@ -3,9 +3,13 @@
 #   - no IS normalization, no protein normalization
 #   - PQN per ionization mode (POS, NEG), with a separate reference per brain region
 #       reference = median profile of the WT samples of that region (same reference for KI and WT)
-#       PQN factors are computed from reproducible metabolites only (raw QC RSD <= 30%)
+#       PQN factors are computed from metabolites detected in >= 90% of samples
+#       (QCs are NOT used to choose them: QCs drifted and the first vial was poor)
 #   - QC: normalized against the median profile of all samples
-#   - QC RSD: flag metabolites (all are kept), log2, save
+#   - reliability flag per metabolite (all metabolites are kept):
+#       robust QC RSD within batch segment (A/B jump removed, MAD-based,
+#       bad QC vials can be excluded) + D-ratio (QC spread vs sample spread)
+#   - log2, save
 #
 # What PQN within region does and does NOT do:
 #   * removes the dilution differences BETWEEN SAMPLES OF THE SAME REGION
@@ -28,7 +32,12 @@ CTX_LABEL  = 'Cortex'        # label of cortex in REGION_COL (only cortex gets t
                              # all regions are found automatically for PQN)
 GENO_COL   = 'Genotype'      # column with KI vs WT
 WT_LABEL   = 'WT'            # label of WT in GENO_COL (PQN reference group)
-QC_RSD_MAX = 30              # %: metabolites above this are flagged and not used for PQN factors
+ID_COL     = 'Sample ID'
+QC_EXCLUDE = []              # Sample IDs of bad QC vials to leave out of reliability stats,
+                             # e.g. the first vial -> fill in after looking at the QC table below
+MIN_DETECT = 0.90            # PQN factors use metabolites detected in >= 90% of samples
+QC_RSD_MAX = 30              # %: robust within-batch QC RSD above this ...
+D_RATIO_MAX = 50             # %: ... AND D-ratio above this -> flagged 'low' (still kept)
 CTX_FACTOR = {'main': 1.31, 'low': 1.10, 'high': 1.56}
 
 # ---------- load ----------
@@ -54,12 +63,33 @@ assert len(regions) == 2, f"expected 2 regions, found {regions}"
 assert CTX_LABEL in regions, f"CTX_LABEL = '{CTX_LABEL}' not in {regions}: copy the exact label"
 assert WT_LABEL in genotypes, f"WT_LABEL = '{WT_LABEL}' not in {genotypes}: copy the exact label"
 wt_mask = s_mask & (df[GENO_COL] == WT_LABEL)
+
+batch_cols = [c for c in df.columns if str(c).strip().lower().startswith('batch segment')]
+if batch_cols and df.loc[qc_mask, batch_cols[0]].notna().all():
+    batch = df[batch_cols[0]].astype(str).str.strip()
+    print(f"Batch column: '{batch_cols[0]}' -> {batch[qc_mask].value_counts().to_dict()} QCs per batch")
+else:
+    batch = pd.Series('all', index=df.index)
+    print("No batch segment found for all QCs: QC stats use one batch")
+qc_use = qc_mask & ~df[ID_COL].astype(str).str.strip().isin([str(x).strip() for x in QC_EXCLUDE])
+print(f"QCs used for reliability stats: {qc_use.sum()} of {qc_mask.sum()} (excluded: {QC_EXCLUDE})")
 print(f"{s_mask.sum()} samples, {qc_mask.sum()} QCs, {len(metabolite_cols)} metabolites")
 print("Samples per region:", df.loc[s_mask, REGION_COL].value_counts().to_dict())
 
 
 def rsd(s):
     return 100 * s.std(ddof=1) / s.mean()
+
+
+def robust_sd_log2(x):
+    """MAD-based SD of log2 values (insensitive to a few bad points)."""
+    x = np.log2(x.where(x > 0)).dropna()
+    return 1.4826 * (x - x.median()).abs().median()
+
+
+def centered(data, groups):
+    """Divide each value by the median of its group (removes batch / region level)."""
+    return data / data.groupby(groups).transform('median')
 
 
 def pqn(data, cols, ref, factor_cols):
@@ -72,13 +102,15 @@ def pqn(data, cols, ref, factor_cols):
 
 # ---------- PQN ----------
 raw_qc_rsd = df.loc[qc_mask, metabolite_cols].apply(rsd)
+detect = (df.loc[s_mask, metabolite_cols] > 0).mean()
 df_norm = df.copy()
 
 for mode in ['POS', 'NEG']:
     cols = [c for c in metabolite_cols if c.startswith(mode + '_')]
-    factor_cols = [c for c in cols if raw_qc_rsd[c] <= QC_RSD_MAX]
+    factor_cols = [c for c in cols if detect[c] >= MIN_DETECT]
     fcol = f'PQN_factor_{mode}'
-    print(f"\n{mode}: {len(cols)} metabolites, {len(factor_cols)} used for PQN factors (raw QC RSD <= {QC_RSD_MAX}%)")
+    print(f"\n{mode}: {len(cols)} metabolites, {len(factor_cols)} used for PQN factors "
+          f"(detected in >= {MIN_DETECT:.0%} of samples)")
 
     # samples: one reference per region = median of the WT samples of that region,
     # applied to KI and WT alike
@@ -119,16 +151,57 @@ for mode in ['POS', 'NEG']:
 r = df_norm.loc[s_mask, ['PQN_factor_POS', 'PQN_factor_NEG']].corr().iloc[0, 1]
 print(f"POS vs NEG PQN factor correlation r = {r:.2f}  (expect high, e.g. > 0.7)")
 
-# ---------- QC RSD after PQN: flag, do NOT remove ----------
+# ---------- QC vials: find bad ones (fill QC_EXCLUDE above, then re-run) ----------
+# A/B jump per metabolite, estimated from the many samples (median per region, then across regions)
+s_vals = df_norm.loc[s_mask, metabolite_cols]
+s_reg, s_bat = df.loc[s_mask, REGION_COL], batch[s_mask]
+shift = pd.DataFrame({
+    b: pd.concat([s_vals[(s_reg == r) & (s_bat == b)].median() / s_vals[s_reg == r].median()
+                  for r in regions if ((s_reg == r) & (s_bat == b)).any()], axis=1).median(axis=1)
+    for b in sorted(batch[qc_mask].unique())}).T            # rows = batch, cols = metabolites
+shift = shift.reindex(sorted(batch[qc_mask].unique())).fillna(1.0)
+
+qcn = df_norm.loc[qc_mask, metabolite_cols]
+qc_corr = qcn / shift.loc[batch[qc_mask]].values           # QCs with the A/B jump removed
+qc_corr = qc_corr.where(qc_corr > 0)
+dev = np.log2(qc_corr / qc_corr.median()).abs().median(axis=1)
+inj_col = next((c for c in df.columns if str(c).strip().lower().startswith('injection')), None)
+qc_view = pd.DataFrame({'Sample ID': df.loc[qc_mask, ID_COL],
+                        'injection': df.loc[qc_mask, inj_col] if inj_col else np.nan,
+                        'batch': batch[qc_mask],
+                        'median |log2 dev| from QC median': dev.round(3)})
+print("\nQC vials (a vial far above the others is a candidate for QC_EXCLUDE):")
+print(qc_view.sort_values('injection').to_string(index=False))
+
+# ---------- reliability per metabolite: flag, do NOT remove ----------
+#   QC_RSD_robust_%: MAD-based RSD of QCs after removing the A/B jump (estimated from samples)
+#                    (insensitive to the jump and to one or two bad vials)
+#   D_ratio_%:       QC spread / sample spread (samples centered per region);
+#                    < 50% = technical noise is small compared with the biological signal
+qc_c = qc_corr.loc[qc_use[qc_mask].values]                 # jump-corrected, bad vials excluded
+s_c  = centered(df_norm.loc[s_mask, metabolite_cols], df.loc[s_mask, REGION_COL])
+sd_qc = qc_c.apply(robust_sd_log2)
+sd_s  = s_c.apply(robust_sd_log2)
+qc_rsd_robust = 100 * np.sqrt(np.exp((sd_qc * np.log(2)) ** 2) - 1)   # log-SD -> RSD
+d_ratio = 100 * sd_qc / sd_s
 qc_rsd = df_norm.loc[qc_mask, metabolite_cols].apply(rsd)
+
+reliability = np.select(
+    [qc_rsd_robust <= QC_RSD_MAX, d_ratio <= D_RATIO_MAX],
+    ['good', f'acceptable (QC RSD > {QC_RSD_MAX}% but D-ratio <= {D_RATIO_MAX}%)'],
+    default='low')
 qc_table = pd.DataFrame({'Metabolite': metabolite_cols,
                          'QC_RSD_raw_%': raw_qc_rsd.round(1).values,
-                         'QC_RSD_%': qc_rsd.round(1).values,
-                         'Reliability': np.where(qc_rsd > QC_RSD_MAX,
-                                                 f'low (QC RSD > {QC_RSD_MAX}%)', 'good')})
-flagged = qc_table[qc_table['Reliability'] != 'good'].sort_values('QC_RSD_%', ascending=False)
-print(f"\nKept all {len(metabolite_cols)} metabolites; {len(flagged)} flagged as low reliability:")
-print(flagged.to_string(index=False))
+                         'QC_RSD_afterPQN_%': qc_rsd.round(1).values,
+                         'QC_RSD_robust_%': qc_rsd_robust.round(1).values,
+                         'D_ratio_%': d_ratio.round(1).values,
+                         'Reliability': reliability})
+not_good = qc_table[qc_table['Reliability'] != 'good'].sort_values('QC_RSD_robust_%', ascending=False)
+print(f"\nKept all {len(metabolite_cols)} metabolites; "
+      f"{(qc_table['Reliability'] == 'good').sum()} good, "
+      f"{qc_table['Reliability'].str.startswith('acceptable').sum()} acceptable, "
+      f"{(qc_table['Reliability'] == 'low').sum()} low:")
+print(not_good.to_string(index=False))
 qc_table.to_csv(os.path.join(output_dir, 'metabolite_QC_RSD_flags.csv'), index=False)
 
 # ---------- log2 + save (samples only, no IS columns, all metabolites) ----------
@@ -153,4 +226,4 @@ for k, fct in CTX_FACTOR.items():
     p = os.path.join(output_dir, f'PQNregion_log2_CTXadj_{k}.csv')
     adj.to_csv(p, index=False)
     print(f"Saved CTX / {fct} ({k}) to {os.path.basename(p)}  -> absolute CTX vs Hip only")
-print("Saved QC RSD + reliability flag per metabolite to metabolite_QC_RSD_flags.csv")
+print("Saved QC RSD, robust QC RSD, D-ratio and reliability per metabolite to metabolite_QC_RSD_flags.csv")
