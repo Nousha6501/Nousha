@@ -1,7 +1,7 @@
 # ══════════════════════════════════════════════════════════════════
 # Hippocampus - KNN distance vs. injection order  [IS-normalized file]
-# ALL samples kept: 72H_AP4_M_KI_64, 23H_AP4_F_KI_162 and 9H-12H are NOT removed;
-# 9H-12H are marked with a black ring.
+# Leaves out ONLY 23H_AP4_F_KI_162 (from this screen; no data file is changed).
+# All other samples are kept, incl. 72H_AP4_M_KI_64 and 9H-12H (marked with a black ring).
 # Data: IS-normalized, imputed file (not raw) -> not directly comparable with the raw screen
 # colored by consensus flag count (n_methods_flagged)
 # Fully self-contained.
@@ -27,7 +27,7 @@ file_path = r"C:\Users\nnekooiemarnany\OneDrive - UTHealth Houston\Desktop\Metab
 REGION_KEY  = 'hip'                                  # text label match ('Hippocmpus', ...)
 REGION_CODE = 0                                      # numeric code of hippocampus in old files
 homog_prefixes = ('9H_', '10H_', '11H_', '12H_')     # documented issues: FLAGGED, not removed
-EXCLUDE_SAMPLES = []                                 # keep all samples
+EXCLUDE_SAMPLES = ['23H_AP4_F_KI_162']               # only this sample is left out
 EXCLUDE_HOMOG   = False                              # keep 9H-12H (marked only)
 QC_OUTLIER_ZONE = (0, 10)                            # injections of the poor first QC vials (6-7)
 CONTAMINATION = 0.05
