@@ -47,8 +47,19 @@ SET_MISSING = [('35H_AP4_F_WT_147', 'NEG_ATP/dGTP')]   # (Sample ID, metabolite)
 df = pd.read_csv(input_path)
 metabolite_cols = [c for c in df.columns if c.startswith(('POS_', 'NEG_')) and '13C' not in c]
 is_cols = [c for c in df.columns if '13C' in c]
-qc_mask = df['Type'] == 'Quality control'
+df['Type'] = df['Type'].astype(str).str.strip()
+qc_mask = df['Type'].str.lower().str.startswith('quality')          # 'Quality control'
 s_mask  = df['Type'] == 'Sample'
+
+# this cell needs the RAW file WITH QCs (e.g. master_with_QC3.csv), not an already-normalized one
+_v = df.loc[s_mask, metabolite_cols].apply(pd.to_numeric, errors='coerce')
+assert _v.max().max() > 60, (
+    f"{os.path.basename(input_path)} looks already log2 / normalized (max value {_v.max().max():.1f}). "
+    "Use the RAW file (master_with_QC3.csv) as input_path.")
+assert qc_mask.sum() >= 3, (
+    f"only {qc_mask.sum()} QC rows in {os.path.basename(input_path)} "
+    f"(values in 'Type': {sorted(df['Type'].unique())}). "
+    "This cell needs the RAW file WITH QCs (master_with_QC3.csv) as input_path.")
 
 for sample, met in SET_MISSING:
     hit = df['Sample ID'].astype(str).str.strip() == sample
