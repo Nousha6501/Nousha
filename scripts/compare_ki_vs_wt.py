@@ -1,11 +1,11 @@
 # =============================================================================
-#  KI vs WT comparison per metabolite  -  Hippocampus, Female (Hip_F)
+#  KI vs WT comparison per metabolite  -  Hippocampus, Female, APOE4
 # =============================================================================
 #
 #  What this script does
 #  ---------------------
 #   1. Loads the PQN-normalised, log2-transformed data (CSV)
-#   2. Keeps only Hippocampus + Female samples
+#   2. Keeps only Hippocampus + Female + APOE4 samples (change in STEP 0)
 #   3. For every metabolite: compares KI vs WT (Welch t-test on log2 values)
 #      and corrects for multiple testing (Benjamini-Hochberg FDR)
 #   4. Saves a results table (CSV)
@@ -40,6 +40,8 @@ OUTPUT_FOLDER = "results"                       # where the CSV + PDF are saved
 
 REGION = "Hippocmpus"     # value in column "Region of brain" (spelled like this in the file)
 SEX = "F"                 # value in column "Gender"
+APOE_LINE = "APOE4"       # value in column "line of APOE": "APOE2", "APOE3", "APOE4",
+                          # or None to use all APOE lines together
 
 ALPHA = 0.05              # significance threshold
 USE_FDR = False           # False = use raw p-value, True = use FDR-corrected q-value
@@ -61,16 +63,21 @@ metabolites = [col for col in data.columns if col.startswith(("POS_", "NEG_"))]
 print(f"Number of metabolites: {len(metabolites)}")
 
 
-# %% STEP 2 - Keep only Hippocampus + Female, WT and KI
+# %% STEP 2 - Keep only the chosen region + sex (+ APOE line), WT and KI
 hip_f = data[
     (data["Region of brain"] == REGION)
     & (data["Gender"] == SEX)
     & (data["Genotype"].isin(["WT", "KI"]))
 ]
+if APOE_LINE is not None:
+    hip_f = hip_f[hip_f["line of APOE"] == APOE_LINE]
+
+# Name used in titles and file names, e.g. "Hippocmpus_F_APOE4"
+subset_name = f"{REGION}_{SEX}" + (f"_{APOE_LINE}" if APOE_LINE else "")
 
 wt_samples = hip_f[hip_f["Genotype"] == "WT"]
 ki_samples = hip_f[hip_f["Genotype"] == "KI"]
-print(f"{REGION} {SEX}: WT = {len(wt_samples)} samples, KI = {len(ki_samples)} samples")
+print(f"{subset_name}: WT = {len(wt_samples)} samples, KI = {len(ki_samples)} samples")
 
 
 # %% STEP 3 - Statistics: KI vs WT for each metabolite
@@ -114,7 +121,7 @@ if len(significant) > 0:
 
 # %% STEP 4 - Save the results table
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
-table_file = os.path.join(OUTPUT_FOLDER, f"{REGION}_{SEX}_KI_vs_WT_stats.csv")
+table_file = os.path.join(OUTPUT_FOLDER, f"{subset_name}_KI_vs_WT_stats.csv")
 results.to_csv(table_file, index=False)
 print(f"\nSaved table: {table_file}")
 
@@ -203,24 +210,29 @@ def show_figure(fig):
     """Show the figure in Jupyter / VS Code / Spyder (if SHOW_PLOTS), then free memory."""
     if SHOW_PLOTS:
         try:
+            from IPython import get_ipython
             from IPython.display import display
+            in_notebook = get_ipython() is not None
+        except ImportError:
+            in_notebook = False
+        if in_notebook:            # Jupyter / VS Code notebook / Spyder
             display(fig)
-        except ImportError:        # plain Python without IPython: open a window
+        else:                      # plain Python in a terminal: open a window
             plt.show()
     plt.close(fig)
 
 
 # %% STEP 6 - Make the PDF
-pdf_file = os.path.join(OUTPUT_FOLDER, f"{REGION}_{SEX}_KI_vs_WT_plots.pdf")
+pdf_file = os.path.join(OUTPUT_FOLDER, f"{subset_name}_KI_vs_WT_plots.pdf")
 
 with PdfPages(pdf_file) as pdf:
     # Pages 1..n: all metabolites (4 x 5 per page)
-    add_pages(pdf, results, f"{REGION} {SEX}: KI vs WT - all metabolites", n_rows=5, n_cols=4)
+    add_pages(pdf, results, f"{subset_name}: KI vs WT - all metabolites", n_rows=5, n_cols=4)
 
     # Last page(s): significant metabolites only (3 x 4 per page, bigger)
     if len(significant) > 0:
         add_pages(pdf, significant,
-                  f"{REGION} {SEX}: KI vs WT - significant ({sig_column} < {ALPHA})",
+                  f"{subset_name}: KI vs WT - significant ({sig_column} < {ALPHA})",
                   n_rows=4, n_cols=3)
     else:
         fig = plt.figure(figsize=(8.27, 11.69))
