@@ -1,32 +1,31 @@
-#!/usr/bin/env python3
-"""Compare KI vs WT per metabolite within one region/sex subset (default: Hippocampus, female).
+# =============================================================================
+#  KI vs WT comparison per metabolite  -  Hippocampus, Female (Hip_F)
+# =============================================================================
+#
+#  What this script does
+#  ---------------------
+#   1. Loads the PQN-normalised, log2-transformed data (CSV)
+#   2. Keeps only Hippocampus + Female samples
+#   3. For every metabolite: compares KI vs WT (Welch t-test on log2 values)
+#      and corrects for multiple testing (Benjamini-Hochberg FDR)
+#   4. Saves a results table (CSV)
+#   5. Saves a PDF with column plots (mean +/- SEM + individual samples + stars):
+#        - first pages : all metabolites
+#        - last page(s): only the significant metabolites
+#
+#  How to use
+#  ----------
+#   - Change the settings in STEP 0 (mainly DATA_FILE).
+#   - Run the whole script (Spyder / VS Code / PyCharm "Run", or
+#     `python compare_ki_vs_wt.py` in a terminal).
+#   - Each "# %%" line starts a cell, so you can also run it step by step.
+#
+#  Packages needed:  pip install pandas numpy scipy statsmodels matplotlib
+# =============================================================================
 
-Input: the PQN-normalised, log2-transformed sample table (one row per sample,
-metadata columns first, then one column per metabolite prefixed POS_/NEG_).
-
-Statistics are run on the log2 values:
-  * Welch's t-test (default) or Mann-Whitney U (--test mwu), KI vs WT
-  * Benjamini-Hochberg FDR across all metabolites in the subset
-
-Outputs (in --outdir):
-  * <prefix>_stats.csv  - n, means, log2 fold change (KI - WT), p, FDR q per metabolite
-  * <prefix>_plots.pdf  - column plots (mean +/- SEM with individual points) for all
-                          metabolites, followed by separate page(s) showing only the
-                          significant metabolites (if any)
-
-Plots show each sample as % of the WT mean (100 * 2^(log2 - mean_WT)), so bars start
-at zero and WT = 100 %. Use --scale log2 to plot the raw log2 values instead.
-
-Example:
-  python scripts/compare_ki_vs_wt.py PQNregion_log2_samples_clean.csv \
-      --region Hippocmpus --sex F --outdir results
-"""
-import argparse
-import math
+# %% Imports
 import os
 
-import matplotlib
-matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -34,180 +33,186 @@ from matplotlib.backends.backend_pdf import PdfPages
 from scipy import stats
 from statsmodels.stats.multitest import multipletests
 
-GROUP_COL = "Genotype"
-REGION_COL = "Region of brain"
-SEX_COL = "Gender"
-GROUPS = ["WT", "KI"]
-COLORS = {"WT": "#9AA5B1", "KI": "#C0504D"}
+
+# %% STEP 0 - Settings  (edit here)
+DATA_FILE = "PQNregion_log2_samples_clean.csv"   # path to your data file
+OUTPUT_FOLDER = "results"                       # where the CSV + PDF are saved
+
+REGION = "Hippocmpus"     # value in column "Region of brain" (spelled like this in the file)
+SEX = "F"                 # value in column "Gender"
+
+ALPHA = 0.05              # significance threshold
+USE_FDR = False           # False = use raw p-value, True = use FDR-corrected q-value
+                          # (for the stars and for the "significant" page)
+
+WT_COLOR = "#9AA5B1"      # grey
+KI_COLOR = "#C0504D"      # red
 
 
-def stars(p):
+# %% STEP 1 - Load the data
+data = pd.read_csv(DATA_FILE)
+print(f"Loaded {DATA_FILE}: {data.shape[0]} samples x {data.shape[1]} columns")
+
+# Metabolite columns are the ones starting with POS_ or NEG_
+metabolites = [col for col in data.columns if col.startswith(("POS_", "NEG_"))]
+print(f"Number of metabolites: {len(metabolites)}")
+
+
+# %% STEP 2 - Keep only Hippocampus + Female, WT and KI
+hip_f = data[
+    (data["Region of brain"] == REGION)
+    & (data["Gender"] == SEX)
+    & (data["Genotype"].isin(["WT", "KI"]))
+]
+
+wt_samples = hip_f[hip_f["Genotype"] == "WT"]
+ki_samples = hip_f[hip_f["Genotype"] == "KI"]
+print(f"{REGION} {SEX}: WT = {len(wt_samples)} samples, KI = {len(ki_samples)} samples")
+
+
+# %% STEP 3 - Statistics: KI vs WT for each metabolite
+results = []
+for met in metabolites:
+    wt = wt_samples[met].dropna()
+    ki = ki_samples[met].dropna()
+
+    t_stat, p_value = stats.ttest_ind(ki, wt, equal_var=False)   # Welch t-test
+
+    results.append({
+        "metabolite": met,
+        "n_WT": len(wt),
+        "n_KI": len(ki),
+        "mean_log2_WT": wt.mean(),
+        "mean_log2_KI": ki.mean(),
+        "log2FC_KI_vs_WT": ki.mean() - wt.mean(),
+        "fold_change_KI_vs_WT": 2 ** (ki.mean() - wt.mean()),
+        "t_stat": t_stat,
+        "p_value": p_value,
+    })
+
+results = pd.DataFrame(results)
+
+# Multiple-testing correction (Benjamini-Hochberg FDR)
+results["q_value_FDR"] = multipletests(results["p_value"], method="fdr_bh")[1]
+
+# Which value decides significance
+sig_column = "q_value_FDR" if USE_FDR else "p_value"
+results["significant"] = results[sig_column] < ALPHA
+results["direction"] = np.where(results["log2FC_KI_vs_WT"] > 0, "up in KI", "down in KI")
+
+results = results.sort_values("p_value").reset_index(drop=True)
+significant = results[results["significant"]]
+
+print(f"\nSignificant metabolites ({sig_column} < {ALPHA}): {len(significant)}")
+if len(significant) > 0:
+    print(significant[["metabolite", "log2FC_KI_vs_WT", "p_value", "q_value_FDR", "direction"]]
+          .to_string(index=False))
+
+
+# %% STEP 4 - Save the results table
+os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+table_file = os.path.join(OUTPUT_FOLDER, f"{REGION}_{SEX}_KI_vs_WT_stats.csv")
+results.to_csv(table_file, index=False)
+print(f"\nSaved table: {table_file}")
+
+
+# %% STEP 5 - Plot functions
+def p_to_stars(p):
+    """Convert a p-value into significance stars."""
     if p < 0.0001:
         return "****"
-    if p < 0.001:
+    elif p < 0.001:
         return "***"
-    if p < 0.01:
+    elif p < 0.01:
         return "**"
-    if p < 0.05:
+    elif p < 0.05:
         return "*"
-    return "ns"
-
-
-def metabolite_columns(df):
-    return [c for c in df.columns if c.startswith(("POS_", "NEG_"))]
-
-
-def run_stats(sub, mets, test):
-    rows = []
-    for m in mets:
-        wt = sub.loc[sub[GROUP_COL] == "WT", m].dropna()
-        ki = sub.loc[sub[GROUP_COL] == "KI", m].dropna()
-        if len(wt) < 2 or len(ki) < 2:
-            p = np.nan
-        elif test == "mwu":
-            p = stats.mannwhitneyu(ki, wt, alternative="two-sided").pvalue
-        else:
-            p = stats.ttest_ind(ki, wt, equal_var=False).pvalue
-        rows.append({
-            "metabolite": m,
-            "n_WT": len(wt), "n_KI": len(ki),
-            "mean_log2_WT": wt.mean(), "mean_log2_KI": ki.mean(),
-            "log2FC_KI_vs_WT": ki.mean() - wt.mean(),
-            "FC_KI_vs_WT": 2 ** (ki.mean() - wt.mean()),
-            "p_value": p,
-        })
-    res = pd.DataFrame(rows)
-    ok = res["p_value"].notna()
-    res["q_value_BH"] = np.nan
-    res.loc[ok, "q_value_BH"] = multipletests(res.loc[ok, "p_value"], method="fdr_bh")[1]
-    return res
-
-
-def draw_panel(ax, sub, row, scale, sig_on, rng):
-    m = row["metabolite"]
-    wt_mean = row["mean_log2_WT"]
-    data = {}
-    for g in GROUPS:
-        v = sub.loc[sub[GROUP_COL] == g, m].dropna().to_numpy()
-        data[g] = 100 * 2 ** (v - wt_mean) if scale == "pct" else v
-
-    tops = []
-    for i, g in enumerate(GROUPS):
-        v = data[g]
-        mean = v.mean()
-        sem = v.std(ddof=1) / np.sqrt(len(v)) if len(v) > 1 else 0
-        ax.bar(i, mean, width=0.6, color=COLORS[g], alpha=0.85, edgecolor="black", linewidth=0.6)
-        ax.errorbar(i, mean, yerr=sem, color="black", capsize=4, linewidth=1)
-        ax.scatter(i + rng.uniform(-0.15, 0.15, len(v)), v, s=10, color="black", alpha=0.7, zorder=3)
-        tops.append(max(v.max(), mean + sem))
-
-    ymax = max(tops)
-    if scale == "log2":
-        lo = min(data["WT"].min(), data["KI"].min())
-        span = ymax - lo
-        ax.set_ylim(lo - 0.3 * span, ymax + 0.35 * span)
-        h = 0.08 * span
     else:
-        ax.set_ylim(0, ymax * 1.25)
-        h = 0.05 * ymax
+        return "ns"
 
-    pval = row["q_value_BH"] if sig_on == "fdr" else row["p_value"]
-    y = ymax + h
-    ax.plot([0, 0, 1, 1], [y, y + h, y + h, y], color="black", linewidth=0.8)
-    ax.text(0.5, y + 1.2 * h, stars(pval) if not np.isnan(pval) else "n/a",
-            ha="center", va="bottom", fontsize=9)
 
-    name = m.split("_", 1)[1] if "_" in m else m
-    ax.set_title(f"{name}\n[{m.split('_', 1)[0]}]  p={row['p_value']:.3g}, q={row['q_value_BH']:.3g}",
-                 fontsize=7)
-    ax.set_xticks(range(len(GROUPS)))
-    ax.set_xticklabels([f"{g}\n(n={len(data[g])})" for g in GROUPS], fontsize=7)
+def plot_one_metabolite(ax, row):
+    """Column plot (mean +/- SEM + points) for one metabolite, with significance bracket.
+
+    Values are shown as % of the WT mean (100 * 2^(log2 - mean WT)),
+    because log2 values (~20) would make all bars look the same height.
+    The statistics themselves are done on the log2 values.
+    """
+    met = row["metabolite"]
+    wt_pct = 100 * 2 ** (wt_samples[met].dropna() - row["mean_log2_WT"])
+    ki_pct = 100 * 2 ** (ki_samples[met].dropna() - row["mean_log2_WT"])
+
+    groups = [("WT", wt_pct, WT_COLOR), ("KI", ki_pct, KI_COLOR)]
+    rng = np.random.default_rng(0)   # fixed seed so the dot jitter is the same each run
+
+    for x, (name, values, color) in enumerate(groups):
+        mean = values.mean()
+        sem = values.std(ddof=1) / np.sqrt(len(values))
+        ax.bar(x, mean, width=0.6, color=color, edgecolor="black", linewidth=0.6)
+        ax.errorbar(x, mean, yerr=sem, color="black", capsize=4, linewidth=1)
+        ax.scatter(x + rng.uniform(-0.15, 0.15, len(values)), values,
+                   s=10, color="black", alpha=0.7, zorder=3)
+
+    # Significance bracket + stars
+    top = max(wt_pct.max(), ki_pct.max())
+    h = 0.05 * top
+    ax.plot([0, 0, 1, 1], [top + h, top + 2 * h, top + 2 * h, top + h], color="black", linewidth=0.8)
+    ax.text(0.5, top + 2.2 * h, p_to_stars(row[sig_column]), ha="center", va="bottom", fontsize=9)
+
+    # Labels
+    mode, name = met.split("_", 1)            # e.g. "POS", "GLUTAMATE"
+    ax.set_title(f"{name} [{mode}]\np = {row['p_value']:.3g}, q = {row['q_value_FDR']:.3g}", fontsize=7)
+    ax.set_xticks([0, 1])
+    ax.set_xticklabels([f"WT\n(n={len(wt_pct)})", f"KI\n(n={len(ki_pct)})"], fontsize=7)
+    ax.set_ylabel("% of WT mean", fontsize=7)
+    ax.set_ylim(0, top * 1.25)
     ax.tick_params(axis="y", labelsize=7)
-    ax.set_ylabel("% of WT mean" if scale == "pct" else "log2 abundance", fontsize=7)
     ax.spines[["top", "right"]].set_visible(False)
 
 
-def plot_pages(pdf, sub, res, title, scale, sig_on, ncols, nrows, rng):
-    per_page = ncols * nrows
-    n_pages = max(1, math.ceil(len(res) / per_page))
+def add_pages(pdf, table, title, n_rows, n_cols):
+    """Add as many A4 pages as needed to plot every metabolite in `table`."""
+    per_page = n_rows * n_cols
+    n_pages = int(np.ceil(len(table) / per_page))
+
     for page in range(n_pages):
-        chunk = res.iloc[page * per_page:(page + 1) * per_page]
-        fig, axes = plt.subplots(nrows, ncols, figsize=(8.27, 11.69))  # A4 portrait
-        axes = np.atleast_1d(axes).ravel()
-        for ax, (_, row) in zip(axes, chunk.iterrows()):
-            draw_panel(ax, sub, row, scale, sig_on, rng)
-        for ax in axes[len(chunk):]:
+        page_rows = table.iloc[page * per_page:(page + 1) * per_page]
+        fig, axes = plt.subplots(n_rows, n_cols, figsize=(8.27, 11.69))   # A4
+        axes = axes.flatten()
+
+        for ax, (_, row) in zip(axes, page_rows.iterrows()):
+            plot_one_metabolite(ax, row)
+        for ax in axes[len(page_rows):]:       # hide unused panels
             ax.axis("off")
-        suffix = f" (page {page + 1}/{n_pages})" if n_pages > 1 else ""
-        fig.suptitle(title + suffix, fontsize=11, fontweight="bold")
+
+        fig.suptitle(f"{title}  (page {page + 1}/{n_pages})", fontsize=11, fontweight="bold")
         fig.text(0.5, 0.01,
-                 f"Mean ± SEM, dots = samples. Significance by {'BH-FDR q' if sig_on == 'fdr' else 'p-value'}: "
+                 f"Mean ± SEM, dots = individual samples. Welch t-test on log2 data; "
+                 f"stars based on {'FDR q' if USE_FDR else 'p-value'}: "
                  "* <0.05, ** <0.01, *** <0.001, **** <0.0001, ns = not significant",
-                 ha="center", fontsize=7)
+                 ha="center", fontsize=6.5)
         fig.tight_layout(rect=[0, 0.02, 1, 0.97])
         pdf.savefig(fig)
         plt.close(fig)
 
 
-def main():
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("csv", help="PQN-normalised log2 sample table")
-    ap.add_argument("--region", default="Hippocmpus", help="value of 'Region of brain' (default: Hippocmpus)")
-    ap.add_argument("--sex", default="F", help="value of 'Gender' (default: F)")
-    ap.add_argument("--test", choices=["welch", "mwu"], default="welch",
-                    help="welch = Welch t-test (default), mwu = Mann-Whitney U")
-    ap.add_argument("--sig-on", choices=["p", "fdr"], default="p",
-                    help="use raw p (default) or BH-FDR q for stars and the significant page")
-    ap.add_argument("--alpha", type=float, default=0.05)
-    ap.add_argument("--scale", choices=["pct", "log2"], default="pct",
-                    help="y-axis: %% of WT mean (default) or raw log2 values")
-    ap.add_argument("--outdir", default="results")
-    ap.add_argument("--prefix", default=None, help="output file prefix (default: <region>_<sex>_KI_vs_WT)")
-    args = ap.parse_args()
+# %% STEP 6 - Make the PDF
+pdf_file = os.path.join(OUTPUT_FOLDER, f"{REGION}_{SEX}_KI_vs_WT_plots.pdf")
 
-    df = pd.read_csv(args.csv)
-    sub = df[(df[REGION_COL] == args.region) & (df[SEX_COL] == args.sex) & df[GROUP_COL].isin(GROUPS)]
-    if sub.empty:
-        raise SystemExit(f"No samples for region={args.region!r}, sex={args.sex!r}")
-    mets = metabolite_columns(df)
+with PdfPages(pdf_file) as pdf:
+    # Pages 1..n: all metabolites (4 x 5 per page)
+    add_pages(pdf, results, f"{REGION} {SEX}: KI vs WT - all metabolites", n_rows=5, n_cols=4)
 
-    res = run_stats(sub, mets, args.test)
-    sig_col = "q_value_BH" if args.sig_on == "fdr" else "p_value"
-    res["significant"] = res[sig_col] < args.alpha
-    res["direction"] = np.where(res["log2FC_KI_vs_WT"] > 0, "up in KI", "down in KI")
+    # Last page(s): significant metabolites only (3 x 4 per page, bigger)
+    if len(significant) > 0:
+        add_pages(pdf, significant,
+                  f"{REGION} {SEX}: KI vs WT - significant ({sig_column} < {ALPHA})",
+                  n_rows=4, n_cols=3)
+    else:
+        fig = plt.figure(figsize=(8.27, 11.69))
+        fig.text(0.5, 0.5, f"No significant metabolites ({sig_column} < {ALPHA})",
+                 ha="center", fontsize=14)
+        pdf.savefig(fig)
+        plt.close(fig)
 
-    os.makedirs(args.outdir, exist_ok=True)
-    prefix = args.prefix or f"{args.region}_{args.sex}_KI_vs_WT"
-    stats_path = os.path.join(args.outdir, f"{prefix}_stats.csv")
-    res.sort_values("p_value").to_csv(stats_path, index=False)
-
-    test_name = "Welch t-test" if args.test == "welch" else "Mann-Whitney U"
-    label = f"{args.region} {args.sex}: KI vs WT ({test_name})"
-    sig = res[res["significant"]].sort_values("p_value")
-    rng = np.random.default_rng(0)
-
-    pdf_path = os.path.join(args.outdir, f"{prefix}_plots.pdf")
-    with PdfPages(pdf_path) as pdf:
-        plot_pages(pdf, sub, res, f"All metabolites — {label}", args.scale, args.sig_on, 4, 5, rng)
-        if len(sig):
-            plot_pages(pdf, sub, sig,
-                       f"Significant metabolites ({'q' if args.sig_on == 'fdr' else 'p'} < {args.alpha}) — {label}",
-                       args.scale, args.sig_on, 3, 4, rng)
-        else:
-            fig = plt.figure(figsize=(8.27, 11.69))
-            fig.text(0.5, 0.5, f"No significant metabolites ({args.sig_on} < {args.alpha})",
-                     ha="center", fontsize=14)
-            pdf.savefig(fig)
-            plt.close(fig)
-
-    print(f"Samples: " + ", ".join(f"{g}={int((sub[GROUP_COL] == g).sum())}" for g in GROUPS))
-    print(f"Metabolites tested: {len(res)}")
-    print(f"Significant ({args.sig_on} < {args.alpha}): {len(sig)}")
-    if len(sig):
-        print(sig[["metabolite", "log2FC_KI_vs_WT", "p_value", "q_value_BH", "direction"]]
-              .to_string(index=False, float_format=lambda x: f"{x:.4g}"))
-    print(f"Wrote {stats_path}\nWrote {pdf_path}")
-
-
-if __name__ == "__main__":
-    main()
+print(f"Saved plots: {pdf_file}")
