@@ -7,7 +7,10 @@
 #   - test and fold change on the SAME scale (log2):
 #       log2FC = mean log2(KI) - mean log2(WT pooled) = log2 of the ratio of geometric means
 #   - Benjamini-Hochberg FDR across all metabolites
-#   - points coloured by direction only if they pass the cut-offs (p or FDR, and |log2FC|)
+#   - point colours (see legend):
+#       strong red / blue = significant AND >= fold-change cut-off (higher / lower in KI)
+#       light red / blue  = significant but below the fold-change cut-off
+#       grey              = not significant
 #   - saves: figure (PNG + PDF) + full results table
 # Change the SUBGROUP block to use other APOE lines / region / sex.
 # ══════════════════════════════════════════════════════════════════
@@ -42,8 +45,10 @@ SEX_NAME = {'F': 'Female', 'M': 'Male'}
 KI_NAME = 'KI-APOE' + '+'.join(a.replace('APOE', '') for a in KI_APOE)
 WT_NAME = 'WT-APOE' + '+'.join(a.replace('APOE', '') for a in WT_APOE)
 
-# diverging pair (blue = lower in KI, red = higher in KI), neutral gray = not significant
+# diverging pair (blue = lower in KI, red = higher in KI); light tints = significant but small change;
+# neutral gray = not significant
 UP, DOWN, NS = '#e34948', '#2a78d6', '#c9c8c3'
+UP_SMALL, DOWN_SMALL = '#f4a3a2', '#94bbea'
 INK, INK2, GRID = '#0b0b0b', '#52514e', '#e4e3df'
 
 os.makedirs(output_dir, exist_ok=True)
@@ -82,15 +87,21 @@ for c in metabolite_cols:
                  't': t, 'p_value': p, 'n_KI': len(a), 'n_WT': len(b)})
 res = pd.DataFrame(rows)
 res['FDR'] = multipletests(res['p_value'], method='fdr_bh')[1]
-sig = (res[P_COL] < ALPHA) & (res['log2FC_KI_vs_WT'].abs() >= FC_CUTOFF)
-res['Direction'] = np.select([sig & (res['log2FC_KI_vs_WT'] > 0), sig & (res['log2FC_KI_vs_WT'] < 0)],
-                             ['higher in KI', 'lower in KI'], default='n.s.')
+is_sig = res[P_COL] < ALPHA                                  # passes the p (or FDR) threshold
+is_big = res['log2FC_KI_vs_WT'].abs() >= FC_CUTOFF           # passes the fold-change cut-off
+is_up = res['log2FC_KI_vs_WT'] > 0
+res['Direction'] = np.select(
+    [is_sig & is_big & is_up, is_sig & is_big & ~is_up, is_sig & ~is_big & is_up, is_sig & ~is_big & ~is_up],
+    ['higher in KI', 'lower in KI', 'higher in KI (small change)', 'lower in KI (small change)'],
+    default='n.s.')
 res = res.sort_values('p_value').reset_index(drop=True)
 
 # ---------- plot ----------
-fig, ax = plt.subplots(figsize=(7.5, 6.2))
+fig, ax = plt.subplots(figsize=(7.5, 7.0))
 x, y = res['log2FC_KI_vs_WT'], -np.log10(res['p_value'])
-color = res['Direction'].map({'higher in KI': UP, 'lower in KI': DOWN, 'n.s.': NS})
+color = res['Direction'].map({'higher in KI': UP, 'lower in KI': DOWN,
+                              'higher in KI (small change)': UP_SMALL,
+                              'lower in KI (small change)': DOWN_SMALL, 'n.s.': NS})
 ax.scatter(x, y, c=color, s=40, edgecolor='white', linewidth=0.8, zorder=3)
 
 lim = max(abs(x).max(), FC_CUTOFF) * 1.15                      # symmetric x-axis
@@ -123,25 +134,35 @@ for s in ('top', 'right'):
 ax.set_xlabel(f'log2 fold change ({KI_NAME} / {WT_NAME})')
 ax.set_ylabel('-log10(p), Welch t-test')
 n_up, n_down = (res['Direction'] == 'higher in KI').sum(), (res['Direction'] == 'lower in KI').sum()
+n_small = res['Direction'].str.contains('small change').sum()
 ax.set_title(f"{KI_NAME} vs pooled {WT_NAME} – {REGION}, {SEX_NAME.get(SEX, SEX)} "
              f"(WT {wt.sum()}, KI {ki.sum()})\n"
              f"{n_up} higher, {n_down} lower in KI ({'FDR' if P_COL == 'FDR' else 'p'} < {ALPHA}, "
-             f"≥ {2 ** FC_CUTOFF:.1f}-fold) | FDR < {ALPHA}: {(res['FDR'] < ALPHA).sum()}",
+             f"≥ {2 ** FC_CUTOFF:.1f}-fold) | {n_small} more with smaller change | FDR < {ALPHA}: {(res['FDR'] < ALPHA).sum()}",
              color=INK, fontsize=10)
+sig_txt = f"{'FDR' if P_COL == 'FDR' else 'p'} < {ALPHA}"
 handles = [plt.Line2D([], [], marker='o', linestyle='', markersize=7, markerfacecolor=col,
                       markeredgecolor='white', label=l)
-           for col, l in [(UP, 'higher in KI'), (DOWN, 'lower in KI'), (NS, 'not significant')]]
-ax.legend(handles=handles, frameon=False, loc='upper left', fontsize=8)
+           for col, l in [
+               (UP, f'higher in KI: {sig_txt} and ≥ {2 ** FC_CUTOFF:.1f}-fold'),
+               (DOWN, f'lower in KI: {sig_txt} and ≥ {2 ** FC_CUTOFF:.1f}-fold'),
+               (UP_SMALL, f'higher in KI: {sig_txt}, < {2 ** FC_CUTOFF:.1f}-fold'),
+               (DOWN_SMALL, f'lower in KI: {sig_txt}, < {2 ** FC_CUTOFF:.1f}-fold'),
+               (NS, f'not significant ({"FDR" if P_COL == "FDR" else "p"} ≥ {ALPHA})')]]
+# legend below the plot, so it never covers points or labels
+ax.legend(handles=handles, frameon=False, fontsize=8, ncol=2,
+          loc='upper center', bbox_to_anchor=(0.5, -0.12))
 fig.tight_layout()
 
 tag = f"{KI_NAME}_vs_{WT_NAME}_{REGION}_{SEX}"
 for ext in ('png', 'pdf'):
-    fig.savefig(os.path.join(output_dir, f'Volcano_{tag}.{ext}'), dpi=300)
+    fig.savefig(os.path.join(output_dir, f'Volcano_{tag}.{ext}'), dpi=300, bbox_inches='tight')
 plt.show()
 
 # ---------- table ----------
 res.to_csv(os.path.join(output_dir, f'Volcano_{tag}.csv'), index=False)
 print(f"\n{len(res)} metabolites tested | nominal p < {ALPHA}: {(res['p_value'] < ALPHA).sum()} "
-      f"| FDR < {ALPHA}: {(res['FDR'] < ALPHA).sum()} | coloured (cut-offs): {n_up} up, {n_down} down")
+      f"| FDR < {ALPHA}: {(res['FDR'] < ALPHA).sum()} | ≥ {2 ** FC_CUTOFF:.1f}-fold: {n_up} up, {n_down} down "
+      f"| smaller change: {n_small}")
 print(res.head(20).round(4).to_string(index=False))
 print(f"\nSaved figure and table to {output_dir}")
