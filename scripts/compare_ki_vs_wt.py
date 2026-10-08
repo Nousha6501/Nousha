@@ -45,6 +45,9 @@ ALPHA = 0.05              # significance threshold
 USE_FDR = False           # False = use raw p-value, True = use FDR-corrected q-value
                           # (for the stars and for the "significant" page)
 
+SHOW_PLOTS = True         # True = also show the column plots in the notebook / plot pane
+                          # (they are always saved to the PDF)
+
 WT_COLOR = "#9AA5B1"      # grey
 KI_COLOR = "#C0504D"      # red
 
@@ -193,7 +196,18 @@ def add_pages(pdf, table, title, n_rows, n_cols):
                  ha="center", fontsize=6.5)
         fig.tight_layout(rect=[0, 0.02, 1, 0.97])
         pdf.savefig(fig)
-        plt.close(fig)
+        show_figure(fig)
+
+
+def show_figure(fig):
+    """Show the figure in Jupyter / VS Code / Spyder (if SHOW_PLOTS), then free memory."""
+    if SHOW_PLOTS:
+        try:
+            from IPython.display import display
+            display(fig)
+        except ImportError:        # plain Python without IPython: open a window
+            plt.show()
+    plt.close(fig)
 
 
 # %% STEP 6 - Make the PDF
@@ -213,6 +227,6 @@ with PdfPages(pdf_file) as pdf:
         fig.text(0.5, 0.5, f"No significant metabolites ({sig_column} < {ALPHA})",
                  ha="center", fontsize=14)
         pdf.savefig(fig)
-        plt.close(fig)
+        show_figure(fig)
 
 print(f"Saved plots: {pdf_file}")
