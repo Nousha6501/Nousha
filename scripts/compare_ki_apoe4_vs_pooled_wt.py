@@ -1,11 +1,14 @@
 # =============================================================================
-#  KI vs WT comparison per metabolite  -  Hippocampus, Female, APOE4
+#  KI (APOE4) vs pooled WT (APOE2 + APOE3 + APOE4) per metabolite  -  Hippocampus, Female
 # =============================================================================
 #
 #  What this script does
 #  ---------------------
 #   1. Loads the PQN-normalised, log2-transformed data (CSV)
-#   2. Keeps only Hippocampus + Female + APOE4 samples (change in STEP 0)
+#   2. Keeps only Hippocampus + Female samples, then builds the two groups:
+#        KI = KI mice of APOE4
+#        WT = WT mice of APOE2, APOE3 and APOE4 pooled together
+#      (change the lines used for each group in STEP 0)
 #   3. For every metabolite: compares KI vs WT (Welch t-test on log2 values)
 #      and corrects for multiple testing (Benjamini-Hochberg FDR)
 #   4. Saves a results table (CSV)
@@ -17,7 +20,7 @@
 #  ----------
 #   - Change the settings in STEP 0 (mainly DATA_FILE).
 #   - Run the whole script (Spyder / VS Code / PyCharm "Run", or
-#     `python compare_ki_vs_wt.py` in a terminal).
+#     `python compare_ki_apoe4_vs_pooled_wt.py` in a terminal).
 #   - Each "# %%" line starts a cell, so you can also run it step by step.
 #
 #  Packages needed:  pip install pandas numpy scipy statsmodels matplotlib
@@ -36,13 +39,13 @@ from statsmodels.stats.multitest import multipletests
 
 
 # %% STEP 0 - Settings  (edit here)
-DATA_FILE = r"O:\metabolom\Result\new version result_09.2026\PQNregion_log2_samples_clean.csv"   # path to your data file
+DATA_FILE = "PQNregion_log2_samples_clean.csv"   # path to your data file
 OUTPUT_FOLDER = "results"                       # where the CSV + PDF are saved
 
 REGION = "Hippocmpus"     # value in column "Region of brain" (spelled like this in the file)
 SEX = "F"                 # value in column "Gender"
-APOE_LINE = "APOE4"       # value in column "line of APOE": "APOE2", "APOE3", "APOE4",
-                          # or None to use all APOE lines together
+KI_LINES = ["APOE4"]                      # APOE line(s) used for the KI group
+WT_LINES = ["APOE2", "APOE3", "APOE4"]    # APOE line(s) pooled for the WT group
 
 ALPHA = 0.05              # significance threshold
 USE_FDR = False           # False = use raw p-value, True = use FDR-corrected q-value
@@ -64,21 +67,23 @@ metabolites = [col for col in data.columns if col.startswith(("POS_", "NEG_"))]
 print(f"Number of metabolites: {len(metabolites)}")
 
 
-# %% STEP 2 - Keep only the chosen region + sex (+ APOE line), WT and KI
+# %% STEP 2 - Keep only the chosen region + sex, then build the KI and WT groups
 hip_f = data[
     (data["Region of brain"] == REGION)
     & (data["Gender"] == SEX)
-    & (data["Genotype"].isin(["WT", "KI"]))
 ]
-if APOE_LINE is not None:
-    hip_f = hip_f[hip_f["line of APOE"] == APOE_LINE]
 
-# Name used in titles and file names, e.g. "Hippocmpus_F_APOE4"
-subset_name = f"{REGION}_{SEX}" + (f"_{APOE_LINE}" if APOE_LINE else "")
+ki_samples = hip_f[(hip_f["Genotype"] == "KI") & (hip_f["line of APOE"].isin(KI_LINES))]
+wt_samples = hip_f[(hip_f["Genotype"] == "WT") & (hip_f["line of APOE"].isin(WT_LINES))]
 
-wt_samples = hip_f[hip_f["Genotype"] == "WT"]
-ki_samples = hip_f[hip_f["Genotype"] == "KI"]
-print(f"{subset_name}: WT = {len(wt_samples)} samples, KI = {len(ki_samples)} samples")
+# Name used in titles and file names, e.g. "Hippocmpus_F_KI-APOE4_vs_WT-APOE2+3+4"
+ki_label = "KI-APOE" + "+".join(line.replace("APOE", "") for line in KI_LINES)
+wt_label = "WT-APOE" + "+".join(line.replace("APOE", "") for line in WT_LINES)
+subset_name = f"{REGION}_{SEX}_{ki_label}_vs_{wt_label}"
+
+print(f"{REGION} {SEX}: KI = {len(ki_samples)} samples ({', '.join(KI_LINES)})")
+print(f"{REGION} {SEX}: WT = {len(wt_samples)} samples (pooled: "
+      + ", ".join(f"{line} n={(wt_samples['line of APOE'] == line).sum()}" for line in WT_LINES) + ")")
 
 
 # %% STEP 3 - Statistics: KI vs WT for each metabolite
@@ -122,7 +127,7 @@ if len(significant) > 0:
 
 # %% STEP 4 - Save the results table
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
-table_file = os.path.join(OUTPUT_FOLDER, f"{subset_name}_KI_vs_WT_stats.csv")
+table_file = os.path.join(OUTPUT_FOLDER, f"{subset_name}_stats.csv")
 results.to_csv(table_file, index=False)
 print(f"\nSaved table: {table_file}")
 
@@ -179,7 +184,7 @@ def plot_one_metabolite(ax, row):
     name = textwrap.fill(name, 28)            # wrap long names over several lines
     ax.set_title(f"{name} [{mode}]\np = {row['p_value']:.3g}, q = {row['q_value_FDR']:.3g}", fontsize=7)
     ax.set_xticks([0, 1])
-    ax.set_xticklabels([f"WT\n(n={len(wt_values)})", f"KI\n(n={len(ki_values)})"], fontsize=7)
+    ax.set_xticklabels([f"{wt_label}\n(n={len(wt_values)})", f"{ki_label}\n(n={len(ki_values)})"], fontsize=7)
     ax.set_ylabel("log2 abundance (PQN)", fontsize=7)
     ax.tick_params(axis="y", labelsize=7)
     ax.spines[["top", "right"]].set_visible(False)
@@ -228,16 +233,16 @@ def show_figure(fig):
 
 
 # %% STEP 6 - Make the PDF
-pdf_file = os.path.join(OUTPUT_FOLDER, f"{subset_name}_KI_vs_WT_plots.pdf")
+pdf_file = os.path.join(OUTPUT_FOLDER, f"{subset_name}_plots.pdf")
 
 with PdfPages(pdf_file) as pdf:
     # Pages 1..n: all metabolites (4 x 5 per page)
-    add_pages(pdf, results, f"{subset_name}: KI vs WT - all metabolites", n_rows=5, n_cols=4)
+    add_pages(pdf, results, f"{REGION} {SEX}: {ki_label} vs {wt_label} - all metabolites", n_rows=5, n_cols=4)
 
     # Last page(s): significant metabolites only (3 x 4 per page, bigger)
     if len(significant) > 0:
         add_pages(pdf, significant,
-                  f"{subset_name}: KI vs WT - significant ({sig_column} < {ALPHA})",
+                  f"{REGION} {SEX}: {ki_label} vs {wt_label} - significant ({sig_column} < {ALPHA})",
                   n_rows=4, n_cols=3)
     else:
         fig = plt.figure(figsize=(8.27, 11.69))
