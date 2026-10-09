@@ -1,235 +1,201 @@
-"""
-Per-metabolite drift correction for targeted LC-MS metabolomics
-================================================================
-
-Idea
-----
-In a randomized run, biology is not related to injection order. So if a
-metabolite steadily rises or falls with injection number, that trend is
-technical (instrument, column, sample stability in the autosampler).
-
-For EACH metabolite separately we fit, on the study samples:
-
-    log2(value) = drift(injection #)               <- smooth curve, one per segment (A, B)
-                + region + sex + genotype + APOE   <- biology, kept in the data
-                + noise
-
-and then subtract only the drift curve. The biological terms are in the
-model so that the drift estimate is not confused with group differences
-(the groups are not perfectly balanced between segment A and B).
-
-Order of processing:  raw data -> drift correction -> PQN -> log2
-
-Usage
------
-    python drift_correction.py master.csv output_folder/
-
-Requirements: numpy, pandas, scipy (>= 1.8)
-"""
-
-import sys
-from pathlib import Path
+# =============================================================================
+#  DRIFT CORRECTION FOR LC-MS METABOLOMICS  (one metabolite at a time)
+#  Order: raw data  ->  drift correction  ->  PQN  ->  log2
+#
+#  How to use:
+#    1. Change the two paths in STEP 0 below.
+#    2. Run the whole script (Spyder: F5, Jupyter: copy into one cell,
+#       terminal: python drift_correction.py).
+#  Needs: pandas, numpy, scipy, openpyxl
+# =============================================================================
 
 import numpy as np
 import pandas as pd
 from scipy import stats
 from scipy.interpolate import BSpline
 
-# ----------------------------------------------------------------------------
-# Settings: column names in the master file
-# ----------------------------------------------------------------------------
-ID_COL = "Sample ID"
-INJ_COL = "injection #"
-TYPE_COL = "Type"                       # "Sample" or "Quality control"
-SEG_COL = "Batch segment( before jump=A, after jump=B)"
-BIO_COLS = ["Group_Region", "Gender", "Genotype", "line of APOE"]
-FEATURE_PREFIXES = ("POS_", "NEG_")
-IS_TAG = "13C"                          # internal standards contain "13C"
 
-SPLINE_INNER_KNOTS = 2                  # flexibility of the drift curve per segment
-OUTLIER_MAD = 4                         # points > 4 MAD from the fit are ignored in a refit
-EXCLUDE_QC = ["QC_1", "QC_2"]           # conditioning injections, not used for checks
+# =============================================================================
+# STEP 0 - YOUR FILES  (edit only this part)
+# =============================================================================
 
-# Corrections confirmed by the user (wrong injection numbers in the master file)
-INJECTION_FIXES = {"40H_AP4_M_KI_131": 178, "39H_AP2_M_KI_104": 180}
+INPUT_FILE  = r"C:\Users\YourName\Documents\master_with_QC3_real_clean_23H_9101112H_C.csv"
+OUTPUT_FILE = r"C:\Users\YourName\Documents\Drift_corrected_master.xlsx"
 
+# Column names in your master file
+COL_ID      = "Sample ID"
+COL_INJ     = "injection #"
+COL_TYPE    = "Type"                                         # "Sample" / "Quality control"
+COL_SEGMENT = "Batch segment( before jump=A, after jump=B)"
+COL_BIOLOGY = ["Group_Region", "Gender", "Genotype", "line of APOE"]
 
-# ----------------------------------------------------------------------------
-# 1. Load and clean
-# ----------------------------------------------------------------------------
-def load_master(path):
-    df = pd.read_csv(path)
-
-    for sample_id, inj in INJECTION_FIXES.items():
-        df.loc[df[ID_COL] == sample_id, INJ_COL] = inj
-
-    # Empty segment -> decide from position (segment B starts at injection 124)
-    missing = df[SEG_COL].isna()
-    df.loc[missing, SEG_COL] = np.where(df.loc[missing, INJ_COL] >= 124, "B", "A")
-
-    if not df[INJ_COL].is_unique:
-        raise ValueError("Injection numbers are not unique - fix the master file first.")
-
-    return df.sort_values(INJ_COL).reset_index(drop=True)
+# Injection numbers that were wrong in the master file (confirmed)
+INJECTION_FIXES = {"40H_AP4_M_KI_131": 178,
+                   "39H_AP2_M_KI_104": 180}
 
 
-# ----------------------------------------------------------------------------
-# 2. Design matrix
-# ----------------------------------------------------------------------------
-def spline_basis(x, lo, hi, n_inner=SPLINE_INNER_KNOTS, degree=3):
-    """Cubic B-spline basis on [lo, hi]: a set of smooth 'bumps' whose weighted
-    sum can follow a gradual or curved trend over injection order."""
-    inner = np.linspace(lo, hi, n_inner + 2)[1:-1]
-    knots = np.r_[[lo] * (degree + 1), inner, [hi] * (degree + 1)]
-    return BSpline.design_matrix(np.clip(x, lo, hi), knots, degree).toarray()
+# =============================================================================
+# STEP 1 - LOAD AND CLEAN THE DATA
+# =============================================================================
+
+data = pd.read_csv(INPUT_FILE)
+
+# fix injection numbers
+for sample_id, injection in INJECTION_FIXES.items():
+    data.loc[data[COL_ID] == sample_id, COL_INJ] = injection
+
+# empty segment -> A or B by position (segment B starts at injection 124)
+empty = data[COL_SEGMENT].isna()
+data.loc[empty, COL_SEGMENT] = np.where(data.loc[empty, COL_INJ] >= 124, "B", "A")
+
+# sort by injection order
+data = data.sort_values(COL_INJ).reset_index(drop=True)
+
+# which columns are what
+features      = [c for c in data.columns if c.startswith(("POS_", "NEG_"))]   # all 122
+internal_std  = [c for c in features if "13C" in c]                          # 11 IS
+metabolites   = [c for c in features if "13C" not in c]                      # 111
+info_columns  = [c for c in data.columns if c not in features]
+
+is_sample = (data[COL_TYPE] == "Sample").to_numpy()
+injection = data[COL_INJ].to_numpy(dtype=float)
+segment   = data[COL_SEGMENT].to_numpy()
+
+print(f"Loaded {len(data)} injections: {is_sample.sum()} samples, "
+      f"{(~is_sample).sum()} QC; {len(features)} features")
 
 
-def drift_design(injection, segment):
-    """Drift part of the model: a separate smooth curve for segment A and for
-    segment B, so the jump between segments is also captured."""
-    blocks = []
-    for seg in sorted(pd.unique(segment)):
-        in_seg = segment == seg
-        lo, hi = injection[in_seg].min(), injection[in_seg].max()
-        n_basis = SPLINE_INNER_KNOTS + 4
-        block = np.zeros((len(injection), n_basis))
-        block[in_seg] = spline_basis(injection[in_seg], lo, hi)
-        blocks.append(block)
-    return np.hstack(blocks)
+# =============================================================================
+# STEP 2 - BUILD THE MODEL COLUMNS
+#
+# For every metabolite we will fit:
+#     log2(value) = DRIFT CURVE (injection #)  +  BIOLOGY (region, sex, genotype, APOE)
+#
+# DRIFT CURVE: a smooth curve over injection number, made of 6 small "bumps"
+#              (cubic B-splines) in segment A and 6 in segment B, so it can follow
+#              a slow decline, a curve and the jump between segments.
+# BIOLOGY:     one 0/1 column per group level. It is in the model so that group
+#              differences are not mistaken for drift - and it is NOT removed.
+# =============================================================================
+
+def spline_columns(x, start, end):
+    """6 smooth bump columns covering injection numbers start..end."""
+    knots = np.r_[[start] * 4, np.linspace(start, end, 4)[1:-1], [end] * 4]
+    return BSpline.design_matrix(np.clip(x, start, end), knots, 3).toarray()
+
+drift_columns = []
+for seg in ["A", "B"]:
+    in_seg = segment == seg
+    block = np.zeros((len(data), 6))
+    block[in_seg] = spline_columns(injection[in_seg],
+                                   injection[in_seg].min(), injection[in_seg].max())
+    drift_columns.append(block)
+DRIFT = np.hstack(drift_columns)                                   # 12 columns
+
+BIOLOGY = pd.get_dummies(data[COL_BIOLOGY].fillna("QC")).astype(float).to_numpy()
+
+# the model is fitted on study samples only
+X = np.hstack([DRIFT, BIOLOGY])[is_sample]
+n_drift = DRIFT.shape[1]
 
 
-def biology_design(df):
-    """Biological part of the model: one indicator column per level of
-    region, sex, genotype and APOE."""
-    return pd.get_dummies(df[BIO_COLS].fillna("QC")).astype(float).values
+# =============================================================================
+# STEP 3 - DRIFT CORRECTION, ONE METABOLITE AT A TIME
+# =============================================================================
+
+raw         = data[features].astype(float)
+log_raw     = np.log2(raw)
+corrected   = raw.copy()
+drift_factor = raw.copy()
+
+for name in features:
+
+    y = log_raw[name].to_numpy()
+
+    # 3a. fit drift curve + biology together (least squares, samples only)
+    coef = np.linalg.lstsq(X, y[is_sample], rcond=None)[0]
+
+    # 3b. refit without strong outliers (> 4 MAD), so one odd sample
+    #     cannot bend the curve (the sample itself stays in the data)
+    resid = y[is_sample] - X @ coef
+    mad   = 1.4826 * np.median(np.abs(resid - np.median(resid)))
+    keep  = np.abs(resid) < 4 * mad
+    coef  = np.linalg.lstsq(X[keep], y[is_sample][keep], rcond=None)[0]
+
+    # 3c. keep ONLY the drift part -> one drift value per injection (QCs too)
+    drift = DRIFT @ coef[:n_drift]
+
+    # 3d. center it, so the average sample does not change
+    drift = drift - drift[is_sample].mean()
+
+    # 3e. remove the drift   (log scale: subtract  =  raw scale: divide)
+    corrected[name]    = 2 ** (y - drift)
+    drift_factor[name] = 2 ** drift
+
+print("Drift correction done for all features")
 
 
-# ----------------------------------------------------------------------------
-# 3. Fit and remove drift, one metabolite at a time
-# ----------------------------------------------------------------------------
-def fit_drift_one_metabolite(log_values, D_drift, D_bio, is_sample):
-    """Return the drift curve (log2 scale) for every injection, samples and QCs.
+# =============================================================================
+# STEP 4 - PQN NORMALIZATION, THEN log2
+#   reference   = median of each metabolite over the study samples
+#   PQN factor  = median of (sample / reference) over the 111 metabolites
+#                 (internal standards are not used for the factor)
+# =============================================================================
 
-    log_values : log2 intensities of ONE metabolite for all injections
-    D_drift    : spline columns (injection order)
-    D_bio      : biology columns
-    is_sample  : True for study samples (only these are used to fit)
-    """
-    X = np.hstack([D_drift[is_sample], D_bio[is_sample]])
-    y = log_values[is_sample]
-    n_drift = D_drift.shape[1]
+reference  = corrected.loc[is_sample, metabolites].median()
+pqn_factor = (corrected[metabolites] / reference).median(axis=1)
+pqn_log2   = np.log2(corrected.div(pqn_factor, axis=0))
 
-    # Least-squares fit of drift + biology together
-    beta = np.linalg.lstsq(X, y, rcond=None)[0]
-
-    # Robust step: refit without gross outliers (they stay in the data, they
-    # are just not allowed to pull the curve)
-    resid = y - X @ beta
-    mad = 1.4826 * np.median(np.abs(resid - np.median(resid)))
-    keep = np.abs(resid) < OUTLIER_MAD * mad
-    beta = np.linalg.lstsq(X[keep], y[keep], rcond=None)[0]
-
-    # Keep only the drift coefficients -> drift curve for ALL injections
-    drift = D_drift @ beta[:n_drift]
-
-    # Center so the average sample is unchanged (correction only removes the trend)
-    return drift - drift[is_sample].mean()
+print(f"PQN factors (samples): {pqn_factor[is_sample].min():.2f} - "
+      f"{pqn_factor[is_sample].max():.2f}")
 
 
-def correct_drift(df, features):
-    injection = df[INJ_COL].to_numpy(float)
-    segment = df[SEG_COL].to_numpy()
-    is_sample = (df[TYPE_COL] == "Sample").to_numpy()
+# =============================================================================
+# STEP 5 - CHECK THE RESULT
+#   rho           : Spearman correlation with injection order (drift; ~0 = none)
+#   RSD           : variation between samples (should drop for drifting compounds)
+#   Hip vs Cortex : biology must stay about the same
+# =============================================================================
 
-    D_drift = drift_design(injection, segment)
-    D_bio = biology_design(df)
+qc_for_check = (~is_sample) & ~data[COL_ID].isin(["QC_1", "QC_2"]).to_numpy()
+hip = is_sample & (data["Group_Region"] == "Hippocmpus").to_numpy()
+ctx = is_sample & (data["Group_Region"] == "Cortex").to_numpy()
 
-    log_raw = np.log2(df[features].to_numpy(float))
-    drift = np.column_stack([
-        fit_drift_one_metabolite(log_raw[:, j], D_drift, D_bio, is_sample)
-        for j in range(len(features))
-    ])
+def rsd(values):
+    return np.std(values, ddof=1) / np.mean(values) * 100
 
-    corrected = pd.DataFrame(2 ** (log_raw - drift), columns=features, index=df.index)
-    drift_factor = pd.DataFrame(2 ** drift, columns=features, index=df.index)
-    return corrected, drift_factor        # corrected = raw / drift_factor
+rows = []
+for name in features:
+    before = raw[name].to_numpy()
+    after  = corrected[name].to_numpy()
+    rows.append({
+        "Metabolite":            name,
+        "rho before":            stats.spearmanr(injection[is_sample], before[is_sample])[0],
+        "rho after":             stats.spearmanr(injection[is_sample], after[is_sample])[0],
+        "sample RSD% before":    rsd(before[is_sample]),
+        "sample RSD% after":     rsd(after[is_sample]),
+        "QC RSD% before":        rsd(before[qc_for_check]),
+        "QC RSD% after":         rsd(after[qc_for_check]),
+        "log2 Hip/Cortex before": np.log2(np.median(before[hip]) / np.median(before[ctx])),
+        "log2 Hip/Cortex after":  np.log2(np.median(after[hip]) / np.median(after[ctx])),
+    })
+validation = pd.DataFrame(rows)
 
-
-# ----------------------------------------------------------------------------
-# 4. PQN normalization and log2 (after drift correction)
-# ----------------------------------------------------------------------------
-def pqn_log2(corrected, metabolites, is_sample):
-    """PQN: reference = median study sample; each sample's factor = median of
-    its metabolite/reference ratios. Internal standards are not used for the
-    factor. Returns log2(corrected / factor) and the factors."""
-    reference = corrected.loc[is_sample, metabolites].median()
-    factor = (corrected[metabolites] / reference).median(axis=1)
-    return np.log2(corrected.div(factor, axis=0)), factor
-
-
-# ----------------------------------------------------------------------------
-# 5. Checks
-# ----------------------------------------------------------------------------
-def rsd(x):
-    return np.std(x, ddof=1) / np.mean(x) * 100
+print(f"Features with clear drift (|rho| >= 0.3): "
+      f"{(validation['rho before'].abs() >= 0.3).sum()} before -> "
+      f"{(validation['rho after'].abs() >= 0.3).sum()} after")
 
 
-def validation_table(df, raw, corrected, features):
-    injection = df[INJ_COL].to_numpy(float)
-    is_sample = (df[TYPE_COL] == "Sample").to_numpy()
-    is_qc = ((df[TYPE_COL] == "Quality control") & ~df[ID_COL].isin(EXCLUDE_QC)).to_numpy()
-    region = df["Group_Region"].to_numpy()
-    hip = is_sample & (region == "Hippocmpus")
-    ctx = is_sample & (region == "Cortex")
+# =============================================================================
+# STEP 6 - SAVE
+# =============================================================================
 
-    rows = []
-    for f in features:
-        b, a = raw[f].to_numpy(float), corrected[f].to_numpy(float)
-        rows.append({
-            "Metabolite": f,
-            "rho_vs_injection_before": stats.spearmanr(injection[is_sample], b[is_sample])[0],
-            "rho_vs_injection_after": stats.spearmanr(injection[is_sample], a[is_sample])[0],
-            "sample_RSD_before": rsd(b[is_sample]),
-            "sample_RSD_after": rsd(a[is_sample]),
-            "QC_RSD_before": rsd(b[is_qc]),
-            "QC_RSD_after": rsd(a[is_qc]),
-            # biology must survive: hippocampus vs cortex difference
-            "log2_Hip_vs_Cortex_before": np.log2(np.median(b[hip]) / np.median(b[ctx])),
-            "log2_Hip_vs_Cortex_after": np.log2(np.median(a[hip]) / np.median(a[ctx])),
-        })
-    return pd.DataFrame(rows)
+info = data[info_columns]
+with pd.ExcelWriter(OUTPUT_FILE) as excel:
+    pd.concat([info, corrected], axis=1).to_excel(excel, sheet_name="Corrected_raw", index=False)
+    pd.concat([info, pqn_factor.rename("PQN_factor"), pqn_log2], axis=1).to_excel(
+        excel, sheet_name="Corrected_PQN_log2", index=False)
+    pd.concat([info, drift_factor], axis=1).to_excel(excel, sheet_name="Drift_factor", index=False)
+    validation.to_excel(excel, sheet_name="Validation", index=False)
 
-
-# ----------------------------------------------------------------------------
-# Main
-# ----------------------------------------------------------------------------
-def main(master_path, out_dir):
-    out = Path(out_dir)
-    out.mkdir(parents=True, exist_ok=True)
-
-    df = load_master(master_path)
-    features = [c for c in df.columns if c.startswith(FEATURE_PREFIXES)]
-    metabolites = [c for c in features if IS_TAG not in c]
-    meta = [c for c in df.columns if c not in features]
-    is_sample = (df[TYPE_COL] == "Sample").to_numpy()
-
-    corrected, drift_factor = correct_drift(df, features)
-    pqn, pqn_factor = pqn_log2(corrected, metabolites, is_sample)
-    checks = validation_table(df, df[features], corrected, features)
-
-    pd.concat([df[meta], corrected], axis=1).to_csv(out / "corrected_raw.csv", index=False)
-    pd.concat([df[meta], pqn_factor.rename("PQN_factor"), pqn], axis=1).to_csv(
-        out / "corrected_PQN_log2.csv", index=False)
-    pd.concat([df[meta], drift_factor], axis=1).to_csv(out / "drift_factor.csv", index=False)
-    checks.to_csv(out / "validation.csv", index=False)
-
-    n_before = (checks["rho_vs_injection_before"].abs() >= 0.3).sum()
-    n_after = (checks["rho_vs_injection_after"].abs() >= 0.3).sum()
-    print(f"Features with clear drift (|rho| >= 0.3): {n_before} before, {n_after} after")
-    print(f"Results written to {out.resolve()}")
-
-
-if __name__ == "__main__":
-    if len(sys.argv) != 3:
-        sys.exit("Usage: python drift_correction.py master.csv output_folder/")
-    main(sys.argv[1], sys.argv[2])
+print(f"Saved: {OUTPUT_FILE}")
