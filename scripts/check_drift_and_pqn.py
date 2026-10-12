@@ -18,14 +18,13 @@
 #  TEST 7  POS-NEG agreement           same metabolite measured in both modes
 #
 #  How to use: change the paths in STEP 0, run the whole script.
+#  Plots are shown in the notebook and saved as PNG in OUTPUT_DIR.
 #  Needs: pandas, numpy, scipy, matplotlib, openpyxl
 # =============================================================================
 
 import os
 import numpy as np
 import pandas as pd
-import matplotlib
-matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from scipy import stats
 
@@ -52,6 +51,7 @@ DUAL_MODE   = {"POS_CYCLIC AMP":            "NEG_CYCLIC-AMP",
                "POS_AMINOADIPATE":          "NEG_AMINOADIPIC ACID",
                "POS_INOSINE-MONOPHOSPHATE": "NEG_INOSINE MONOPHOSPHATE"}
 N_PC = 5
+SHOW_PLOTS = True          # True: show plots in the notebook (and save them); False: only save
 
 
 # =============================================================================
@@ -198,7 +198,7 @@ for mode in ["POS", "NEG"]:
             ax.set_ylabel(f"PC2 ({var[1]:.0f}%)", fontsize=8)
     fig.suptitle(f"{mode} mode: PCA without (top) and with (bottom) drift correction, both PQN + log2")
     fig.savefig(os.path.join(OUTPUT_DIR, f"PCA_{mode}_A_vs_B.png"), dpi=130, bbox_inches="tight")
-    plt.close(fig)
+    plt.show() if SHOW_PLOTS else plt.close(fig)
 
 # PC scores vs injection order (where drift would show up)
 for mode in ["POS", "NEG"]:
@@ -215,7 +215,7 @@ for mode in ["POS", "NEG"]:
     fig.suptitle(f"{mode} mode: PC scores vs injection order (A top, B bottom)")
     fig.tight_layout()
     fig.savefig(os.path.join(OUTPUT_DIR, f"PCscores_vs_injection_{mode}.png"), dpi=130)
-    plt.close(fig)
+    plt.show() if SHOW_PLOTS else plt.close(fig)
 
 
 # =============================================================================
