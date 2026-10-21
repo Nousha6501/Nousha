@@ -23,10 +23,13 @@ COLOR_LIMIT = 0.6              # log2FC at which the colour is darkest
 REGION = "Hippocmpus"          # spelled as in the data file
 SEX = "F"
 APOE_LINES = ["APOE2", "APOE3", "APOE4"]
+EXCLUDE_SAMPLES = ["34H_AP3_F_WT_163"]   # samples left out of the analysis
 
 # ---------------------------------------------------------------- load data
 data = pd.read_csv(INPUT_FILE)
 samples = data[(data["Region of brain"] == REGION) & (data["Gender"] == SEX)]
+samples = samples[~samples["Sample ID"].isin(EXCLUDE_SAMPLES)]
+print(f"Excluded: {EXCLUDE_SAMPLES}")
 metabolites = [col for col in data.columns if col.startswith(("POS_", "NEG_"))]
 
 wt = samples[samples["Genotype"] == "WT"]                     # pooled WT
