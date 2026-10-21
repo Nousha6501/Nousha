@@ -1,28 +1,63 @@
-# log2FC of KI vs pooled WT in female hippocampus, per APOE genotype.
-# Data are already log2, so log2FC = mean(KI) - mean(WT).
+"""
+log2 fold change: KI vs pooled WT, per APOE genotype
+Female hippocampus
+
+Input : drift-corrected, PQN-normalised, log2-transformed data (one row per sample)
+Output: one table with, for each metabolite and each KI line,
+        log2FC, p-value (Dunnett vs pooled WT) and FDR (Benjamini-Hochberg)
+"""
+
 import pandas as pd
 from scipy import stats
 from statsmodels.stats.multitest import multipletests
 
-data = pd.read_csv("DriftCor_PQNregion_log2_samples_clean.csv")
-hip_f = data[(data["Region of brain"] == "Hippocmpus") & (data["Gender"] == "F")]
-metabolites = [c for c in data.columns if c.startswith(("POS_", "NEG_"))]
+# ---------------------------------------------------------------- settings
+INPUT_FILE = "DriftCor_PQNregion_log2_samples_clean.csv"
+OUTPUT_FILE = "log2FC_Hippocampus_Female.csv"
+REGION = "Hippocmpus"          # spelled as in the data file
+SEX = "F"
+APOE_LINES = ["APOE2", "APOE3", "APOE4"]
 
-wt = hip_f[hip_f["Genotype"] == "WT"]
-ki = {apoe: hip_f[(hip_f["Genotype"] == "KI") & (hip_f["line of APOE"] == apoe)]
-      for apoe in ["APOE2", "APOE3", "APOE4"]}
+# ---------------------------------------------------------------- load data
+data = pd.read_csv(INPUT_FILE)
+samples = data[(data["Region of brain"] == REGION) & (data["Gender"] == SEX)]
+metabolites = [col for col in data.columns if col.startswith(("POS_", "NEG_"))]
 
-table = pd.DataFrame(index=metabolites)
+wt = samples[samples["Genotype"] == "WT"]                     # pooled WT
+ki = {apoe: samples[(samples["Genotype"] == "KI") & (samples["line of APOE"] == apoe)]
+      for apoe in APOE_LINES}
+
+print(f"WT (pooled): n = {len(wt)}")
 for apoe, group in ki.items():
-    table[f"log2FC_KI-{apoe}"] = group[metabolites].mean() - wt[metabolites].mean()
+    print(f"KI-{apoe}: n = {len(group)}")
 
-# p-values: Dunnett test, each KI group vs pooled WT
-p = pd.DataFrame([stats.dunnett(*[g[m].dropna() for g in ki.values()],
-                                control=wt[m].dropna()).pvalue for m in metabolites],
-                 index=metabolites, columns=list(ki))
-for apoe in ki:
-    table[f"p_KI-{apoe}"] = p[apoe]
-    table[f"FDR_KI-{apoe}"] = multipletests(p[apoe], method="fdr_bh")[1]
+# ---------------------------------------------------------------- statistics
+results = pd.DataFrame({
+    "Metabolite": [m.split("_", 1)[1] for m in metabolites],
+    "Mode": [m.split("_", 1)[0] for m in metabolites],
+})
 
-table.round(4).to_csv("log2FC_Hippocampus_Female.csv", index_label="Metabolite")
-print(table.round(3))
+# Dunnett test: each KI group vs pooled WT, one metabolite at a time
+p_values = {apoe: [] for apoe in APOE_LINES}
+for m in metabolites:
+    ki_groups = [ki[apoe][m].dropna() for apoe in APOE_LINES]
+    p = stats.dunnett(*ki_groups, control=wt[m].dropna()).pvalue
+    for apoe, p_apoe in zip(APOE_LINES, p):
+        p_values[apoe].append(p_apoe)
+
+for apoe in APOE_LINES:
+    # data are log2, so the fold change is a difference of means
+    results[f"log2FC KI-{apoe}"] = (ki[apoe][metabolites].mean()
+                                    - wt[metabolites].mean()).values
+    results[f"p KI-{apoe}"] = p_values[apoe]
+    results[f"FDR KI-{apoe}"] = multipletests(p_values[apoe], method="fdr_bh")[1]
+
+# ---------------------------------------------------------------- save
+results = results.round(4)
+results.to_csv(OUTPUT_FILE, index=False)
+print(f"\nSaved {len(results)} metabolites to {OUTPUT_FILE}")
+
+for apoe in APOE_LINES:
+    n_p = (results[f"p KI-{apoe}"] < 0.05).sum()
+    n_fdr = (results[f"FDR KI-{apoe}"] < 0.05).sum()
+    print(f"KI-{apoe}: {n_p} metabolites p < 0.05, {n_fdr} FDR < 0.05")
