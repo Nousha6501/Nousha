@@ -82,15 +82,15 @@ if ONLY_SIGNIFICANT:
 cmap = LinearSegmentedColormap.from_list(
     "blue_grey_red", ["#104281", "#3987e5", "#f0efec", "#e34948", "#8f1d1c"])
 
-fig, ax = plt.subplots(figsize=(5, 0.18 * len(labels) + 1.8))
+fig, ax = plt.subplots(figsize=(7, 0.18 * len(labels) + 1.8))
 im = ax.imshow(fc, cmap=cmap, vmin=-COLOR_LIMIT, vmax=COLOR_LIMIT, aspect="auto")
 
-for i in range(len(labels)):
-    for j in range(len(APOE_LINES)):
-        if fdr[i, j] < 0.05:
-            ax.text(j, i, "★", ha="center", va="center", fontsize=8)
-        elif p[i, j] < 0.05:
-            ax.text(j, i, "•", ha="center", va="center", fontsize=9)
+# markers instead of text symbols, so they display the same on every computer
+rows, cols = (fdr < 0.05).nonzero()
+ax.scatter(cols, rows, marker="*", s=60, color="black", label="FDR < 0.05")
+sig_only = (p < 0.05) & (fdr >= 0.05)
+rows, cols = sig_only.nonzero()
+ax.scatter(cols, rows, marker="o", s=8, color="black", label="p < 0.05")
 
 ax.set_xticks(range(len(APOE_LINES)), [f"KI\n{apoe}" for apoe in APOE_LINES], fontsize=8)
 ax.xaxis.tick_top()
@@ -101,7 +101,8 @@ for side in ax.spines.values():
 
 bar = fig.colorbar(im, ax=ax, shrink=0.3, extend="both")
 bar.set_label("log2FC vs pooled WT", fontsize=8)
-ax.set_title("Female hippocampus: KI vs pooled WT\n• p < 0.05   ★ FDR < 0.05", fontsize=9, pad=12)
+ax.set_title("Female hippocampus: KI vs pooled WT", fontsize=9, pad=12)
+ax.legend(loc="upper left", bbox_to_anchor=(1.02, 1), fontsize=7, frameon=False)
 
 fig.tight_layout()
 fig.savefig(HEATMAP_FILE, dpi=300, bbox_inches="tight")
