@@ -10,7 +10,7 @@ Output: KEGG metabolic pathway enrichment
         as CSV tables and PDF plots.
 
 Works for two kinds of data — set FEATURE_TYPE below:
-  "gene"       -> transcriptomics / proteomics (gene symbols or Entrez IDs)
+  "gene"       -> transcriptomics / proteomics (gene symbols, Ensembl or Entrez IDs)
   "metabolite" -> metabolomics (KEGG compound IDs, e.g. C00031)
 
 Pathways are taken live from the KEGG REST API (https://rest.kegg.jp) and
@@ -43,7 +43,7 @@ LFC_COL = "log2FC"  # column with log2 fold change
 P_COL = "padj"      # column with adjusted p-value
 
 # gene data only
-ID_TYPE = "SYMBOL"  # "SYMBOL" or "ENTREZID"
+ID_TYPE = "SYMBOL"  # "SYMBOL", "ENSEMBL" (e.g. ENSMUSG00000000001) or "ENTREZID"
 ORGANISM = "mmu"    # KEGG organism code: mmu mouse, rno rat, hsa human
 
 P_CUT = 0.05    # significance cut-off for features
@@ -112,6 +112,31 @@ def symbol_to_entrez():
             if sym and (i == 0 or sym.upper() not in mapping):
                 mapping[sym.upper()] = entrez
     return mapping
+
+
+def ensembl_to_entrez(ids):
+    """Map Ensembl gene IDs to Entrez IDs with the mygene.info API (cached)."""
+    species = {"mmu": "mouse", "rno": "rat", "hsa": "human"}.get(ORGANISM)
+    if species is None:
+        sys.exit(f"Ensembl mapping: add a mygene species name for '{ORGANISM}'")
+    cache = os.path.join(OUT_DIR, "kegg_cache", f"ensembl_entrez_{ORGANISM}.csv")
+    mapping = {}
+    if os.path.exists(cache):
+        mapping = pd.read_csv(cache, dtype=str).set_index("ensembl")["entrez"].to_dict()
+    todo = sorted(set(ids) - set(mapping))
+    for i in range(0, len(todo), 1000):
+        print(f"Mapping Ensembl -> Entrez via mygene.info ({i + 1}-{min(i + 1000, len(todo))} of {len(todo)})")
+        r = requests.post("https://mygene.info/v3/query", timeout=120, data={
+            "q": ",".join(todo[i:i + 1000]), "scopes": "ensembl.gene",
+            "fields": "entrezgene", "species": species})
+        r.raise_for_status()
+        for hit in r.json():
+            if "entrezgene" in hit and hit["query"] not in mapping:
+                mapping[hit["query"]] = str(hit["entrezgene"])
+    for q in todo:
+        mapping.setdefault(q, None)  # remember misses so they aren't re-queried
+    pd.DataFrame({"ensembl": list(mapping), "entrez": list(mapping.values())}).to_csv(cache, index=False)
+    return {k: v for k, v in mapping.items() if isinstance(v, str)}
 
 
 # ---- 3. Read results ---------------------------------------------------------
@@ -250,6 +275,10 @@ def main():
         if ID_TYPE == "SYMBOL":
             m = symbol_to_entrez()
             df["key"] = df["id"].str.upper().map(m)
+        elif ID_TYPE == "ENSEMBL":
+            ens = df["id"].str.replace(r"\.\d+$", "", regex=True)  # drop version (.12)
+            m = ensembl_to_entrez(ens.unique().tolist())
+            df["key"] = ens.map(m)
         else:
             df["key"] = df["id"].str.replace(r"\.0$", "", regex=True)
     elif FEATURE_TYPE == "metabolite":
