@@ -38,8 +38,8 @@ MIN_SIZE = 3                   # pathways with fewer measured metabolites are sk
 # Pathway sets: official KEGG mouse metabolic pathways, restricted to the measured metabolites.
 # The file is made by build_kegg_sets.py (one row per pathway, metabolites separated by " | ").
 PATHWAY_FILE = "kegg_pathways_measured.csv"
-kegg = pd.read_csv(PATHWAY_FILE)
-PATHWAYS = {row["Pathway"]: row["Metabolites"].split(" | ") for _, row in kegg.iterrows()}
+pathway_table = pd.read_csv(PATHWAY_FILE)
+PATHWAYS = {row["Pathway"]: row["Metabolites"].split(" | ") for _, row in pathway_table.iterrows()}
 
 # compounds measured twice: keep one name, drop the other
 DUPLICATES = {"CYCLIC-AMP": "CYCLIC AMP", "INOSINE MONOPHOSPHATE": "INOSINE-MONOPHOSPHATE",
