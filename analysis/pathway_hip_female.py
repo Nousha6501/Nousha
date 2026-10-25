@@ -13,6 +13,7 @@ Method: for every pathway and KI line
              metabolites, so pathways that share metabolites are handled correctly)
           4) FDR (Benjamini-Hochberg) across pathways, per KI line
         This is a self-contained test, the same idea as MetaboAnalyst's QEA / global test.
+Pathways: KEGG mouse metabolic pathways (file made by build_kegg_sets.py)
 Output: table of all pathways x KI lines, and a dot plot
 """
 
@@ -34,55 +35,12 @@ N_PERMUTATIONS = 5000
 SEED = 1
 MIN_SIZE = 3                   # pathways with fewer measured metabolites are skipped
 
-# Metabolite sets built from standard biochemistry (KEGG-style pathways), restricted to the
-# metabolites measured here. Names must match the data columns without the POS_/NEG_ prefix.
-# Compounds measured in both modes are listed once (see DUPLICATES below).
-PATHWAYS = {
-    "Glycolysis": ["FRUCTOSE-1,6-BISPHOSPHATE", "2-PHOSPHOGLYCERATE", "LACTATE", "ACETYL-COA"],
-    "Pentose phosphate pathway": ["6-PHOSPHOGLUCONATE", "D-RIBOSE 5-PHOSPHATE",
-                                  "FRUCTOSE-1,6-BISPHOSPHATE", "NADP", "NADPH"],
-    "TCA cycle": ["MALATE", "FUMARATE", "SUCCINATE", "ACETYL-COA"],
-    "Glutathione metabolism": ["GLUTATHIONE REDUCED", "GLUTATHIONE DISULFIDE", "NADP", "NADPH",
-                               "PYROGLUTAMIC ACID/OXOPROLINE", "GLUTAMATE", "GLYCINE",
-                               "OPHTHALMATE"],
-    "Purine metabolism": ["ADENINE", "ADENOSINE", "ADENOSINE-MONOPHOSPHATE", "ATP/dGTP",
-                          "CYCLIC AMP", "INOSINE-MONOPHOSPHATE", "INOSINE", "HYPOXANTHINE",
-                          "XANTHINE", "URIC ACID", "GUANINE", "GUANOSINE",
-                          "GUANOSINE MONOPHOSPHATE", "GDP", "GTP",
-                          "DEOXYGUANOSINE-MONOPHOSPHATE", "ADENYLSUCCINIC ACID"],
-    "Pyrimidine metabolism": ["CYTIDINE", "CYTOSINE", "CYTIDINE MONOPHOSPHATE", "CDP",
-                              "URIDINE MONOPHOSPHATE", "URIDINE 5'-DIPHOSPHATE", "UTP", "URACIL"],
-    "Amino sugar and nucleotide sugar metabolism": [
-        "URIDINE DIPHOSPHATEGALACTOSE/URIDINE DIPHOSPHATE GLUCOSE",
-        "URIDINE DIPHOSPHATE GLUCURONIC ACID", "UDP-N-ACETYL-GLUCOSAMINE",
-        "GUANOSINE DIPHOSPHATE MANNOSE", "ACETYLGLUCOSAMINE/N-ACETYLGALACTOSAMIN",
-        "N-ACETYLNEURAMINATE", "ADP-GLUCOSE"],
-    "Alanine, aspartate and glutamate metabolism": [
-        "L-ALANINE", "ASPARTATE", "GLUTAMATE", "GLUTAMINE", "GAMMA-AMINOBUTYRATE",
-        "N-ACETYLASPARTATE", "FUMARATE", "SUCCINATE", "ADENYLSUCCINIC ACID"],
-    "Arginine metabolism and creatine": [
-        "ARGININE", "PROLINE", "CREATINE", "CREATININE", "GUANIDINOACETATE",
-        "4-GUANIDINOBUTANOATE", "N,N-DIMETHYL-ARGININE", "N-ACETYLGLUTAMATE"],
-    "Glycine, serine and threonine metabolism": [
-        "GLYCINE", "SERINE", "ALLOTHREONINE/THREONINE", "SARCOSINE", "BETAINE", "CREATINE",
-        "GUANIDINOACETATE", "HOMOSERINE"],
-    "Methionine cycle / one-carbon": [
-        "METHIONINE", "S-ADENOSYLMETHIONINE", "S-ADENOSYLHOMOCYSTEINE", "METHYLTHIOADENOSINE",
-        "BETAINE", "SARCOSINE", "SERINE", "GLYCINE"],
-    "Lysine degradation": ["LYSINE", "AMINOADIPATE", "PIPECOLATE", "GLUTARYLCARNITINE",
-                           "N,N,N-TRIMETHYLLYSINE"],
-    "Carnitine and fatty acid oxidation": [
-        "L-CARNITINE", "DEOXYCARNITINE", "O-ACETYLCARNITINE", "PALMITOYLCARNITINE",
-        "GLUTARYLCARNITINE", "N,N,N-TRIMETHYLLYSINE"],
-    "Nicotinamide / NAD metabolism": ["NAD+", "NADP", "NADPH", "NICOTINAMIDE",
-                                      "ADENOSINE DIPHOSPHATE RIBOSE"],
-    "Pantothenate and CoA": ["PANTOTHENATE", "COENZYME A", "ACETYL-COA",
-                             "ADENOSINE 3',5'-DIPHOSPHATE"],
-    "Glycerophospholipid head groups": ["PHOSPHORYLCHOLINE", "CITICOLINE",
-                                        "ETHANOLAMINE PHOSPHATE", "CDP-ETHANOLAMINE",
-                                        "BETA-GLYCEROPHOSPHATE"],
-    "Aromatic amino acids": ["PHENYLALANINE", "TYROSINE", "TRYPTOPHAN"],
-}
+# Pathway sets: official KEGG mouse metabolic pathways, restricted to the measured metabolites.
+# The file is made by build_kegg_sets.py (one row per pathway, metabolites separated by " | ").
+PATHWAY_FILE = "kegg_pathways_measured.csv"
+kegg = pd.read_csv(PATHWAY_FILE)
+PATHWAYS = {row["Pathway"]: row["Metabolites"].split(" | ") for _, row in kegg.iterrows()}
+
 # compounds measured twice: keep one name, drop the other
 DUPLICATES = {"CYCLIC-AMP": "CYCLIC AMP", "INOSINE MONOPHOSPHATE": "INOSINE-MONOPHOSPHATE",
               "AMINOADIPIC ACID": "AMINOADIPATE", "DL-PIPECOLIC ACID": "PIPECOLATE"}
@@ -172,7 +130,7 @@ cmap = LinearSegmentedColormap.from_list(
     "blue_grey_red", ["#104281", "#3987e5", "#f0efec", "#e34948", "#8f1d1c"])
 lim = np.ceil(table["direction (mean t)"].abs().max())
 
-fig, ax = plt.subplots(figsize=(7.5, 0.38 * len(order) + 1.6))
+fig, ax = plt.subplots(figsize=(7.5, 0.3 * len(order) + 1.6))
 for j, line in enumerate(lines):
     part = table[table["KI line"] == line].set_index("Pathway").loc[order]
     y = np.arange(len(order))
