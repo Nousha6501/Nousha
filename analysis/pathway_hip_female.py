@@ -35,11 +35,168 @@ N_PERMUTATIONS = 5000
 SEED = 1
 MIN_SIZE = 3                   # pathways with fewer measured metabolites are skipped
 
-# Pathway sets: official KEGG mouse metabolic pathways, restricted to the measured metabolites.
-# The file is made by build_kegg_sets.py (one row per pathway, metabolites separated by " | ").
-PATHWAY_FILE = "kegg_pathways_measured.csv"
-pathway_table = pd.read_csv(PATHWAY_FILE)
-PATHWAYS = {row["Pathway"]: row["Metabolites"].split(" | ") for _, row in pathway_table.iterrows()}
+# Pathway sets: official KEGG mouse metabolic pathways (downloaded from rest.kegg.jp with
+# build_kegg_sets.py), restricted to the measured metabolites, at least 3 per pathway.
+PATHWAYS = {
+    "Purine metabolism": [
+        "ADENINE", "ADENOSINE", "ADENOSINE 3',5'-DIPHOSPHATE", "ADENOSINE DIPHOSPHATE RIBOSE",
+        "ADENOSINE-MONOPHOSPHATE", "ADENYLSUCCINIC ACID", "ATP/dGTP", "CYCLIC AMP",
+        "D-RIBOSE 5-PHOSPHATE", "DEOXYGUANOSINE-MONOPHOSPHATE", "GDP", "GLUTAMINE", "GLYCINE",
+        "GTP", "GUANINE", "GUANOSINE", "GUANOSINE MONOPHOSPHATE", "HYPOXANTHINE", "INOSINE",
+        "INOSINE-MONOPHOSPHATE", "URIC ACID", "XANTHINE"
+    ],
+    "Aminoacyl-tRNA biosynthesis": [
+        "ALLOTHREONINE/THREONINE", "ARGININE", "ASPARTATE", "GLUTAMATE", "GLUTAMINE",
+        "GLYCINE", "HISTIDINE", "L-ALANINE", "LEUCINE/ISOLEUCINE", "LYSINE", "METHIONINE",
+        "PHENYLALANINE", "PROLINE", "SERINE", "TRYPTOPHAN", "TYROSINE"
+    ],
+    "D-Amino acid metabolism": [
+        "ALLOTHREONINE/THREONINE", "ARGININE", "ASPARTATE", "GLUTAMATE", "GLUTAMINE",
+        "GLYCINE", "HISTIDINE", "L-ALANINE", "LYSINE", "METHIONINE", "N-ACETYLGLUTAMATE",
+        "PHENYLALANINE", "PROLINE", "SERINE"
+    ],
+    "Glycine, serine and threonine metabolism": [
+        "2-PHOSPHOGLYCERATE", "ALLOTHREONINE/THREONINE", "ASPARTATE", "BETAINE", "CREATINE",
+        "GLYCINE", "GUANIDINOACETATE", "HOMOSERINE", "SARCOSINE", "SERINE", "TRYPTOPHAN"
+    ],
+    "Arginine and proline metabolism": [
+        "4-GUANIDINOBUTANOATE", "ARGININE", "CREATINE", "CREATININE", "GAMMA-AMINOBUTYRATE",
+        "GLUTAMATE", "GUANIDINOACETATE", "PROLINE", "S-ADENOSYLMETHIONINE", "SARCOSINE"
+    ],
+    "Alanine, aspartate and glutamate metabolism": [
+        "ADENYLSUCCINIC ACID", "ASPARTATE", "FUMARATE", "GAMMA-AMINOBUTYRATE", "GLUTAMATE",
+        "GLUTAMINE", "L-ALANINE", "N-ACETYLASPARTATE", "SUCCINATE"
+    ],
+    "Cysteine and methionine metabolism": [
+        "ASPARTATE", "GLUTATHIONE REDUCED", "HOMOSERINE", "L-ALANINE", "METHIONINE",
+        "METHYLTHIOADENOSINE", "S-ADENOSYLHOMOCYSTEINE", "S-ADENOSYLMETHIONINE", "SERINE"
+    ],
+    "Glyoxylate and dicarboxylate metabolism": [
+        "2-PHOSPHOGLYCERATE", "ACETYL-COA", "ASPARTATE", "GLUTAMATE", "GLUTAMINE", "GLYCINE",
+        "MALATE", "SERINE", "SUCCINATE"
+    ],
+    "One carbon pool by folate": [
+        "ADENOSINE", "ATP/dGTP", "BETAINE", "GLYCINE", "METHIONINE", "S-ADENOSYLHOMOCYSTEINE",
+        "S-ADENOSYLMETHIONINE", "SARCOSINE", "SERINE"
+    ],
+    "Pyrimidine metabolism": [
+        "CDP", "CYTIDINE", "CYTIDINE MONOPHOSPHATE", "CYTOSINE", "GLUTAMINE", "URACIL",
+        "URIDINE 5'-DIPHOSPHATE", "URIDINE MONOPHOSPHATE", "UTP"
+    ],
+    "Glutathione metabolism": [
+        "ACETYL-COA", "GLUTAMATE", "GLUTATHIONE DISULFIDE", "GLUTATHIONE REDUCED", "GLYCINE",
+        "NADP", "NADPH", "PYROGLUTAMIC ACID/OXOPROLINE"
+    ],
+    "Lysine degradation": [
+        "ACETYL-COA", "AMINOADIPATE", "DEOXYCARNITINE", "GLYCINE", "LYSINE",
+        "N,N,N-TRIMETHYLLYSINE", "PIPECOLATE", "SUCCINATE"
+    ],
+    "Nicotinate and nicotinamide metabolism": [
+        "ASPARTATE", "FUMARATE", "GAMMA-AMINOBUTYRATE", "NAD+", "NADP", "NICOTINAMIDE",
+        "SUCCINATE"
+    ],
+    "beta-Alanine metabolism": [
+        "ACETYL-COA", "ASPARTATE", "CARNOSINE", "GAMMA-AMINOBUTYRATE", "HISTIDINE",
+        "PANTOTHENATE", "URACIL"
+    ],
+    "Amino sugar and nucleotide sugar metabolism": [
+        "ACETYLGLUCOSAMINE/N-ACETYLGALACTOSAMIN", "ADP-GLUCOSE",
+        "GUANOSINE DIPHOSPHATE MANNOSE", "UDP-N-ACETYL-GLUCOSAMINE",
+        "URIDINE DIPHOSPHATE GLUCURONIC ACID",
+        "URIDINE DIPHOSPHATEGALACTOSE/URIDINE DIPHOSPHATE GLUCOSE"
+    ],
+    "Arginine biosynthesis": [
+        "ARGININE", "ASPARTATE", "FUMARATE", "GLUTAMATE", "GLUTAMINE", "N-ACETYLGLUTAMATE"
+    ],
+    "Butanoate metabolism": [
+        "2-HYDROXYGLUTERATE", "ACETYL-COA", "FUMARATE", "GAMMA-AMINOBUTYRATE", "GLUTAMATE",
+        "SUCCINATE"
+    ],
+    "Glycerophospholipid metabolism": [
+        "CDP-ETHANOLAMINE", "CITICOLINE", "DIETHANOLAMINE", "ETHANOLAMINE PHOSPHATE",
+        "PHOSPHORYLCHOLINE", "SERINE"
+    ],
+    "Sulfur metabolism": [
+        "ADENOSINE 3',5'-DIPHOSPHATE", "HOMOSERINE", "METHIONINE", "SERINE", "SUCCINATE",
+        "TAURINE"
+    ],
+    "Biosynthesis of various nucleotide sugars": [
+        "GUANOSINE DIPHOSPHATE MANNOSE", "N-ACETYLNEURAMINATE", "UDP-N-ACETYL-GLUCOSAMINE",
+        "URIDINE DIPHOSPHATE GLUCURONIC ACID",
+        "URIDINE DIPHOSPHATEGALACTOSE/URIDINE DIPHOSPHATE GLUCOSE"
+    ],
+    "Galactose metabolism": [
+        "ACETYLGLUCOSAMINE/N-ACETYLGALACTOSAMIN", "GALACTITOL", "MYO-INOSITOL", "SORBITOL",
+        "URIDINE DIPHOSPHATEGALACTOSE/URIDINE DIPHOSPHATE GLUCOSE"
+    ],
+    "Pantothenate and CoA biosynthesis": [
+        "ADENOSINE 3',5'-DIPHOSPHATE", "ASPARTATE", "COENZYME A", "PANTOTHENATE", "URACIL"
+    ],
+    "Phenylalanine metabolism": [
+        "ACETYL-COA", "FUMARATE", "PHENYLALANINE", "SUCCINATE", "TYROSINE"
+    ],
+    "Pyruvate metabolism": [
+        "ACETYL-COA", "FUMARATE", "LACTATE", "MALATE", "SUCCINATE"
+    ],
+    "Ascorbate and aldarate metabolism": [
+        "GUANOSINE DIPHOSPHATE MANNOSE", "MYO-INOSITOL",
+        "URIDINE DIPHOSPHATE GLUCURONIC ACID",
+        "URIDINE DIPHOSPHATEGALACTOSE/URIDINE DIPHOSPHATE GLUCOSE"
+    ],
+    "Citrate cycle (TCA cycle)": [
+        "ACETYL-COA", "FUMARATE", "MALATE", "SUCCINATE"
+    ],
+    "Fructose and mannose metabolism": [
+        "FRUCTOSE-1,6-BISPHOSPHATE", "GUANOSINE DIPHOSPHATE MANNOSE", "LACTATE", "SORBITOL"
+    ],
+    "Glycolysis / Gluconeogenesis": [
+        "2-PHOSPHOGLYCERATE", "ACETYL-COA", "FRUCTOSE-1,6-BISPHOSPHATE", "LACTATE"
+    ],
+    "Histidine metabolism": [
+        "ASPARTATE", "CARNOSINE", "GLUTAMATE", "HISTIDINE"
+    ],
+    "Oxidative phosphorylation": [
+        "ATP/dGTP", "FUMARATE", "NAD+", "SUCCINATE"
+    ],
+    "Pentose phosphate pathway": [
+        "2-PHOSPHOGLYCERATE", "6-PHOSPHOGLUCONATE", "D-RIBOSE 5-PHOSPHATE",
+        "FRUCTOSE-1,6-BISPHOSPHATE"
+    ],
+    "Phenylalanine, tyrosine and tryptophan biosynthesis": [
+        "FRUCTOSE-1,6-BISPHOSPHATE", "PHENYLALANINE", "TRYPTOPHAN", "TYROSINE"
+    ],
+    "Taurine and hypotaurine metabolism": [
+        "ACETYL-COA", "GLUTAMATE", "L-ALANINE", "TAURINE"
+    ],
+    "C5-Branched dibasic acid metabolism": [
+        "2-HYDROXYGLUTERATE", "ACETYL-COA", "GLUTAMATE"
+    ],
+    "Fatty acid degradation": [
+        "ACETYL-COA", "COENZYME A", "PALMITOYLCARNITINE"
+    ],
+    "Neomycin, kanamycin and gentamicin biosynthesis": [
+        "GLUTAMATE", "UDP-N-ACETYL-GLUCOSAMINE",
+        "URIDINE DIPHOSPHATEGALACTOSE/URIDINE DIPHOSPHATE GLUCOSE"
+    ],
+    "Porphyrin metabolism": [
+        "ALLOTHREONINE/THREONINE", "GLUTAMATE", "GLYCINE"
+    ],
+    "Propanoate metabolism": [
+        "ACETYL-COA", "LACTATE", "SUCCINATE"
+    ],
+    "Riboflavin metabolism": [
+        "FAD", "GTP", "RIBOFLAVIN"
+    ],
+    "Thiamine metabolism": [
+        "GLYCINE", "NAD+", "TYROSINE"
+    ],
+    "Tyrosine metabolism": [
+        "FUMARATE", "SUCCINATE", "TYROSINE"
+    ],
+    "Valine, leucine and isoleucine biosynthesis": [
+        "ACETYL-COA", "ALLOTHREONINE/THREONINE", "LEUCINE/ISOLEUCINE"
+    ],
+}
 
 # compounds measured twice: keep one name, drop the other
 DUPLICATES = {"CYCLIC-AMP": "CYCLIC AMP", "INOSINE MONOPHOSPHATE": "INOSINE-MONOPHOSPHATE",
